@@ -55,6 +55,7 @@ The CLI exists primarily so AI agents can manage tasks programmatically. The web
 
 After that:
 
+- Claude Code plugin for AI agent task management
 - Public read-only sharing with permissions
 - Configurable backlog views
 - Browsing completed work
