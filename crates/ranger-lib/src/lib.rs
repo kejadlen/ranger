@@ -1,3 +1,2 @@
-pub fn hello() -> &'static str {
-    "ranger"
-}
+pub mod error;
+pub mod key;
