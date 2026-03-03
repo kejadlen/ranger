@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/ranger-lib", "crates/ranger-cli"]
+resolver = "2"
