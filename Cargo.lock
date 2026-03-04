@@ -1115,8 +1115,10 @@ dependencies = [
 name = "ranger-cli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "ranger-lib",
+ "serde",
  "serde_json",
  "tokio",
  "xdg",

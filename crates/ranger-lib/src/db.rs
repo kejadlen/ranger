@@ -1,6 +1,8 @@
 use crate::error::RangerError;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::path::Path;
+
+pub use sqlx::SqlitePool;
 
 pub async fn connect(path: &Path) -> Result<SqlitePool, RangerError> {
     if let Some(parent) = path.parent() {
