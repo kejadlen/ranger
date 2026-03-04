@@ -47,9 +47,10 @@ While working, add comments to track progress and decisions:
 ranger comment add <key> "Decided to use X because Y"
 ```
 
-When done:
+When done, commit first, then mark the task:
 
 ```bash
+jj commit -m "description of the change"
 ranger task edit <key> --state done
 ranger comment add <key> "Completed — summary of what was done"
 ```
