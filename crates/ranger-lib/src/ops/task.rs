@@ -86,6 +86,17 @@ pub async fn list(
     Ok(tasks)
 }
 
+pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Task, RangerError> {
+    let task = sqlx::query_as::<_, Task>(
+        "SELECT id, key, parent_id, title, description, state, created_at, updated_at \
+         FROM tasks WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(task)
+}
+
 pub async fn get_by_key_prefix(pool: &SqlitePool, prefix: &str) -> Result<Task, RangerError> {
     let pattern = format!("{prefix}%");
     let matches = sqlx::query_as::<_, Task>(

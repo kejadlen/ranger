@@ -26,6 +26,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::backlog::BacklogCommands,
     },
+    /// Manage tasks
+    Task {
+        #[command(subcommand)]
+        command: commands::task::TaskCommands,
+    },
 }
 
 fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
@@ -46,6 +51,9 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Backlog { command } => {
             commands::backlog::run(&pool, command, cli.json).await?;
+        }
+        Commands::Task { command } => {
+            commands::task::run(&pool, command, cli.json).await?;
         }
     }
 
