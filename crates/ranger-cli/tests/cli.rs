@@ -1,5 +1,5 @@
-use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::tempdir;
 
 fn ranger(db_path: &str) -> Command {
@@ -29,20 +29,35 @@ fn full_workflow() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let backlogs: serde_json::Value =
-        serde_json::from_slice(&output.stdout).unwrap();
+    let backlogs: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let backlog_key = backlogs[0]["key"].as_str().unwrap().to_string();
     let bl_prefix = &backlog_key[..4];
 
     // Create tasks
     let output = ranger(db_path)
-        .args(["task", "create", "First task", "--backlog", bl_prefix, "--state", "queued"])
+        .args([
+            "task",
+            "create",
+            "First task",
+            "--backlog",
+            bl_prefix,
+            "--state",
+            "queued",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     let output = ranger(db_path)
-        .args(["task", "create", "Second task", "--backlog", bl_prefix, "--tag", "urgent"])
+        .args([
+            "task",
+            "create",
+            "Second task",
+            "--backlog",
+            bl_prefix,
+            "--tag",
+            "urgent",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -53,8 +68,7 @@ fn full_workflow() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let tasks: serde_json::Value =
-        serde_json::from_slice(&output.stdout).unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let tasks = tasks.as_array().unwrap();
     assert_eq!(tasks.len(), 2);
     assert_eq!(tasks[0]["title"], "First task");
@@ -96,10 +110,7 @@ fn full_workflow() {
     assert!(output.status.success());
 
     // List tags
-    let output = ranger(db_path)
-        .args(["tag", "list"])
-        .output()
-        .unwrap();
+    let output = ranger(db_path).args(["tag", "list"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("urgent"));
@@ -110,8 +121,7 @@ fn full_workflow() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let detail: serde_json::Value =
-        serde_json::from_slice(&output.stdout).unwrap();
+    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(detail["task"]["title"], "Second task");
     assert_eq!(detail["tags"][0]["name"], "urgent");
     assert_eq!(detail["blockers"].as_array().unwrap().len(), 1);
@@ -129,7 +139,6 @@ fn full_workflow() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let tasks: serde_json::Value =
-        serde_json::from_slice(&output.stdout).unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(tasks.as_array().unwrap().len(), 1);
 }

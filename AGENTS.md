@@ -7,10 +7,11 @@ Personal task tracker. Rust workspace: `ranger-lib` (library) + `ranger-cli` (bi
 ## Commands
 
 ```bash
-cargo build --workspace          # Build everything
-cargo test --workspace           # Run all tests (33 unit + 1 integration)
-cargo test -p ranger-lib         # Library tests only
-cargo test -p ranger-cli         # CLI integration test only
+just fmt                         # Format all code
+just check                       # Type-check the workspace
+just clippy                      # Lint (deny warnings)
+just coverage                    # Run tests with coverage (fail under 100%)
+just all                         # fmt + clippy + coverage
 cargo run --bin ranger -- --help  # CLI usage
 ```
 

@@ -8,11 +8,7 @@ pub fn print<T: Serialize + std::fmt::Debug>(value: &T, json: bool, human: impl 
     }
 }
 
-pub fn print_list<T: Serialize + std::fmt::Debug>(
-    values: &[T],
-    json: bool,
-    human: impl Fn(&T),
-) {
+pub fn print_list<T: Serialize + std::fmt::Debug>(values: &[T], json: bool, human: impl Fn(&T)) {
     if json {
         println!("{}", serde_json::to_string_pretty(values).unwrap());
     } else {

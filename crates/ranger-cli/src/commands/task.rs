@@ -102,11 +102,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
         } => {
             let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
             let parent_id = if let Some(parent_key) = &parent {
-                Some(
-                    ops::task::get_by_key_prefix(pool, parent_key)
-                        .await?
-                        .id,
-                )
+                Some(ops::task::get_by_key_prefix(pool, parent_key).await?.id)
             } else {
                 None
             };
@@ -128,13 +124,13 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
                 }
             }
 
-            output::print(&task, json, |t| print_task(t));
+            output::print(&task, json, print_task);
         }
         TaskCommands::List { backlog, state } => {
             if let Some(backlog_key) = &backlog {
                 let bl = ops::backlog::get_by_key_prefix(pool, backlog_key).await?;
                 let tasks = ops::task::list(pool, bl.id, state.as_deref()).await?;
-                output::print_list(&tasks, json, |t| print_task(t));
+                output::print_list(&tasks, json, print_task);
             } else {
                 // List all tasks (no backlog filter)
                 let backlogs = ops::backlog::list(pool).await?;
@@ -147,7 +143,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
                         }
                     }
                 }
-                output::print_list(&all_tasks, json, |t| print_task(t));
+                output::print_list(&all_tasks, json, print_task);
             }
         }
         TaskCommands::Show { key } => {
@@ -202,7 +198,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
                 state.as_deref(),
             )
             .await?;
-            output::print(&updated, json, |t| print_task(t));
+            output::print(&updated, json, print_task);
         }
         TaskCommands::Move {
             key,

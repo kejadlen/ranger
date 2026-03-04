@@ -202,11 +202,10 @@ pub async fn add_to_backlog(
     backlog_id: i64,
 ) -> Result<(), RangerError> {
     // Get the task's state to find proper position
-    let state: String =
-        sqlx::query_scalar("SELECT state FROM tasks WHERE id = ?")
-            .bind(task_id)
-            .fetch_one(pool)
-            .await?;
+    let state: String = sqlx::query_scalar("SELECT state FROM tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_one(pool)
+        .await?;
 
     let last_pos: Option<String> = sqlx::query_scalar(
         "SELECT bt.position FROM backlog_tasks bt \

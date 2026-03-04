@@ -29,12 +29,7 @@ pub async fn run(pool: &SqlitePool, command: BlockerCommands, json: bool) -> any
             let bt = ops::task::get_by_key_prefix(pool, &blocked_by).await?;
             let blocker = ops::blocker::add(pool, t.id, bt.id).await?;
             output::print(&blocker, json, |_| {
-                println!(
-                    "{} blocked by {} {}",
-                    &t.key[..8],
-                    &bt.key[..8],
-                    bt.title
-                );
+                println!("{} blocked by {} {}", &t.key[..8], &bt.key[..8], bt.title);
             });
         }
         BlockerCommands::Remove { task, blocked_by } => {

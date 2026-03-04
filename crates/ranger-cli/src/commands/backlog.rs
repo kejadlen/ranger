@@ -1,7 +1,7 @@
 use clap::Subcommand;
+use ranger_lib::db::SqlitePool;
 use ranger_lib::models::Backlog;
 use ranger_lib::ops;
-use ranger_lib::db::SqlitePool;
 
 use crate::output;
 
@@ -25,15 +25,15 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> any
     match command {
         BacklogCommands::Create { name } => {
             let backlog = ops::backlog::create(pool, &name).await?;
-            output::print(&backlog, json, |b| print_backlog(b));
+            output::print(&backlog, json, print_backlog);
         }
         BacklogCommands::List => {
             let backlogs = ops::backlog::list(pool).await?;
-            output::print_list(&backlogs, json, |b| print_backlog(b));
+            output::print_list(&backlogs, json, print_backlog);
         }
         BacklogCommands::Show { key } => {
             let backlog = ops::backlog::get_by_key_prefix(pool, &key).await?;
-            output::print(&backlog, json, |b| print_backlog_detail(b));
+            output::print(&backlog, json, print_backlog_detail);
         }
     }
     Ok(())

@@ -41,11 +41,10 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let pool = connect(&db_path).await.unwrap();
 
-        let result =
-            sqlx::query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
 
         let table_names: Vec<String> = result
             .iter()
