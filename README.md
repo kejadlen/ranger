@@ -27,7 +27,7 @@ A task is always in one of four states:
 | State | Meaning |
 |---|---|
 | **Icebox** | Captured but not committed to |
-| **Backlog** | Committed and ordered by priority |
+| **Queued** | Committed and ordered by priority |
 | **In Progress** | Actively being worked on |
 | **Done** | Finished |
 
@@ -39,13 +39,43 @@ Tags replace projects. Filter any backlog by tag to see a focused slice of work.
 
 The webapp uses an expanding modal for editing tasks — no cluttered inline editing. Design is minimalist, built with [Utopia](https://utopia.fyi/) fluid responsive CSS.
 
+## Getting Started
+
+Build and install:
+
+```
+cargo install --path crates/ranger-cli
+```
+
+Or run directly:
+
+```
+cargo run --bin ranger -- <command>
+```
+
+### Quick start
+
+```
+ranger backlog create "My Project"
+ranger task create "First thing to do" --backlog <key>
+ranger task create "Second thing" --backlog <key> --state queued --tag urgent
+ranger task list --backlog <key>
+ranger task edit <key> --state in_progress
+ranger comment add <key> "Started working on this"
+ranger task show <key>
+```
+
+Use `--json` on any command for machine-readable output. Tasks and backlogs are referenced by key prefix — type just enough characters to be unique.
+
+The database lives at `$XDG_DATA_HOME/ranger/ranger.db` by default. Override with `--db <path>` or `RANGER_DB` env var.
+
 ## Architecture
 
 Ranger ships as three artifacts from one Rust codebase:
 
-- **Library** — core data model and logic
-- **CLI** — for AI agents and scripting
-- **Webapp** — for human use
+- **Library** (`ranger-lib`) — core data model, database operations, key generation
+- **CLI** (`ranger-cli`) — clap-based binary for humans and AI agents
+- **Webapp** — for human use (planned)
 
 The CLI exists primarily so AI agents can manage tasks programmatically. The webapp exists for humans who prefer a visual interface.
 
