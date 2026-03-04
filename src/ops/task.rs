@@ -160,7 +160,9 @@ pub async fn move_task(
     before_task_id: Option<i64>,
     after_task_id: Option<i64>,
 ) -> Result<(), RangerError> {
-    let before_pos: Option<String> = if let Some(id) = before_task_id {
+    // "before" task = the task we want to appear after us (upper bound)
+    // "after" task = the task we want to appear before us (lower bound)
+    let upper_bound: Option<String> = if let Some(id) = before_task_id {
         sqlx::query_scalar(
             "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
         )
@@ -172,7 +174,7 @@ pub async fn move_task(
         None
     };
 
-    let after_pos: Option<String> = if let Some(id) = after_task_id {
+    let lower_bound: Option<String> = if let Some(id) = after_task_id {
         sqlx::query_scalar(
             "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
         )
@@ -184,7 +186,41 @@ pub async fn move_task(
         None
     };
 
-    let new_pos = position::midpoint(after_pos.as_deref(), before_pos.as_deref());
+    // When only one bound is given, find the adjacent task's position
+    // to avoid collisions with existing positions.
+    let (lower, upper) = match (&lower_bound, &upper_bound) {
+        (Some(low), None) => {
+            // --after only: find the next task's position as upper bound
+            let next: Option<String> = sqlx::query_scalar(
+                "SELECT position FROM backlog_tasks \
+                 WHERE backlog_id = ? AND task_id != ? AND position > ? \
+                 ORDER BY position ASC LIMIT 1",
+            )
+            .bind(backlog_id)
+            .bind(task_id)
+            .bind(low)
+            .fetch_optional(pool)
+            .await?;
+            (Some(low.clone()), next)
+        }
+        (None, Some(up)) => {
+            // --before only: find the previous task's position as lower bound
+            let prev: Option<String> = sqlx::query_scalar(
+                "SELECT position FROM backlog_tasks \
+                 WHERE backlog_id = ? AND task_id != ? AND position < ? \
+                 ORDER BY position DESC LIMIT 1",
+            )
+            .bind(backlog_id)
+            .bind(task_id)
+            .bind(up)
+            .fetch_optional(pool)
+            .await?;
+            (prev, Some(up.clone()))
+        }
+        _ => (lower_bound.clone(), upper_bound.clone()),
+    };
+
+    let new_pos = position::midpoint(lower.as_deref(), upper.as_deref());
 
     sqlx::query("UPDATE backlog_tasks SET position = ? WHERE backlog_id = ? AND task_id = ?")
         .bind(&new_pos)
@@ -395,6 +431,127 @@ mod tests {
 
         let tasks = list(&pool, bl.id, None).await.unwrap();
         assert_eq!(tasks.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn move_task_before() {
+        let pool = test_pool().await;
+        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let t1 = create(&pool, "First", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t2 = create(&pool, "Second", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t3 = create(&pool, "Third", bl.id, None, None, None)
+            .await
+            .unwrap();
+
+        // Move t3 before t1 — should produce order: t3, t1, t2
+        move_task(&pool, t3.id, bl.id, Some(t1.id), None).await.unwrap();
+
+        let tasks = list(&pool, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t3.id, "t3 should be first");
+        assert_eq!(tasks[1].id, t1.id, "t1 should be second");
+        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
+    }
+
+    #[tokio::test]
+    async fn move_task_after() {
+        let pool = test_pool().await;
+        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let t1 = create(&pool, "First", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t2 = create(&pool, "Second", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t3 = create(&pool, "Third", bl.id, None, None, None)
+            .await
+            .unwrap();
+
+        // Move t1 after t3 — should produce order: t2, t3, t1
+        move_task(&pool, t1.id, bl.id, None, Some(t3.id)).await.unwrap();
+
+        let tasks = list(&pool, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t2.id, "t2 should be first");
+        assert_eq!(tasks[1].id, t3.id, "t3 should be second");
+        assert_eq!(tasks[2].id, t1.id, "t1 should be third");
+    }
+
+    #[tokio::test]
+    async fn move_task_after_into_middle() {
+        let pool = test_pool().await;
+        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let t1 = create(&pool, "First", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t2 = create(&pool, "Second", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t3 = create(&pool, "Third", bl.id, None, None, None)
+            .await
+            .unwrap();
+
+        // Move t3 after t1 (but before t2) — should produce order: t1, t3, t2
+        move_task(&pool, t3.id, bl.id, None, Some(t1.id))
+            .await
+            .unwrap();
+
+        let tasks = list(&pool, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t1.id, "t1 should be first");
+        assert_eq!(tasks[1].id, t3.id, "t3 should be second (after t1)");
+        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
+    }
+
+    #[tokio::test]
+    async fn move_task_before_from_middle() {
+        let pool = test_pool().await;
+        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let t1 = create(&pool, "First", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t2 = create(&pool, "Second", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t3 = create(&pool, "Third", bl.id, None, None, None)
+            .await
+            .unwrap();
+
+        // Move t1 before t3 (but after t2) — should produce order: t2, t1, t3
+        move_task(&pool, t1.id, bl.id, Some(t3.id), None)
+            .await
+            .unwrap();
+
+        let tasks = list(&pool, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t2.id, "t2 should be first");
+        assert_eq!(tasks[1].id, t1.id, "t1 should be second (before t3)");
+        assert_eq!(tasks[2].id, t3.id, "t3 should be third");
+    }
+
+    #[tokio::test]
+    async fn move_task_between() {
+        let pool = test_pool().await;
+        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let t1 = create(&pool, "First", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t2 = create(&pool, "Second", bl.id, None, None, None)
+            .await
+            .unwrap();
+        let t3 = create(&pool, "Third", bl.id, None, None, None)
+            .await
+            .unwrap();
+
+        // Move t3 after t1 and before t2 — should produce order: t1, t3, t2
+        move_task(&pool, t3.id, bl.id, Some(t2.id), Some(t1.id))
+            .await
+            .unwrap();
+
+        let tasks = list(&pool, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t1.id, "t1 should be first");
+        assert_eq!(tasks[1].id, t3.id, "t3 should be second");
+        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
     }
 
     #[tokio::test]
