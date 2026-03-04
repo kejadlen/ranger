@@ -31,6 +31,21 @@ enum Commands {
         #[command(subcommand)]
         command: commands::task::TaskCommands,
     },
+    /// Manage comments
+    Comment {
+        #[command(subcommand)]
+        command: commands::comment::CommentCommands,
+    },
+    /// Manage tags
+    Tag {
+        #[command(subcommand)]
+        command: commands::tag::TagCommands,
+    },
+    /// Manage blockers
+    Blocker {
+        #[command(subcommand)]
+        command: commands::blocker::BlockerCommands,
+    },
 }
 
 fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
@@ -54,6 +69,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Task { command } => {
             commands::task::run(&pool, command, cli.json).await?;
+        }
+        Commands::Comment { command } => {
+            commands::comment::run(&pool, command, cli.json).await?;
+        }
+        Commands::Tag { command } => {
+            commands::tag::run(&pool, command, cli.json).await?;
+        }
+        Commands::Blocker { command } => {
+            commands::blocker::run(&pool, command, cli.json).await?;
         }
     }
 
