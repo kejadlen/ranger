@@ -2,16 +2,16 @@
 
 ## Project
 
-Personal task tracker. Rust workspace: `ranger-lib` (library) + `ranger-cli` (binary). SQLite via sqlx, async with tokio, CLI with clap.
+Personal task tracker. Single Rust crate with a library and binary target. SQLite via sqlx, async with tokio, CLI with clap.
 
 ## Commands
 
 ```bash
-just fmt                         # Format all code
-just check                       # Type-check the workspace
-just clippy                      # Lint (deny warnings)
-just coverage                    # Run tests with coverage (fail under 100%)
-just all                         # fmt + clippy + coverage
+just fmt                          # Format all code
+just check                        # Type-check
+just clippy                       # Lint (deny warnings)
+just coverage                     # Run tests with coverage (fail under 100%)
+just all                          # fmt + clippy + coverage
 cargo run --bin ranger -- --help  # CLI usage
 ```
 
@@ -90,39 +90,37 @@ Always use the `working-in-the-open` skill when working on ranger tasks. Use `ra
 ## Architecture
 
 ```
-crates/
-├── ranger-lib/          # Core library
-│   ├── src/
-│   │   ├── db.rs        # SQLite connection, migrations
-│   │   ├── error.rs     # Error types
-│   │   ├── key.rs       # jj-style key generation
-│   │   ├── models.rs    # Data types (Backlog, Task, Comment, Tag, Blocker)
-│   │   ├── position.rs  # Lexicographic fractional indexing
-│   │   └── ops/         # CRUD operations per model
-│   └── migrations/      # SQL schema
-└── ranger-cli/          # CLI binary
-    ├── src/
-    │   ├── main.rs      # Entrypoint, clap setup, DB path resolution
-    │   ├── output.rs    # Human/JSON output helpers
-    │   └── commands/    # One module per subcommand group
-    └── tests/
-        └── cli.rs       # End-to-end integration test
+src/
+├── lib.rs               # Library root
+├── db.rs                # SQLite connection, migrations
+├── error.rs             # Error types
+├── key.rs               # jj-style key generation
+├── models.rs            # Data types (Backlog, Task, Comment, Tag, Blocker)
+├── position.rs          # Lexicographic fractional indexing
+├── ops/                 # CRUD operations per model
+└── bin/ranger/          # CLI binary
+    ├── main.rs          # Entrypoint, clap setup, DB path resolution
+    ├── output.rs        # Human/JSON output helpers
+    └── commands/        # One module per subcommand group
+migrations/              # SQL schema
+tests/
+└── cli.rs               # End-to-end integration test
 ```
 
 ## Key Design Decisions
 
 - **Keys**: jj-style random strings (16 chars, `k-z` alphabet). Reference by shortest unique prefix.
 - **Positioning**: Lexicographic string-based ordering within backlogs. Insert between two positions without renumbering.
+- **Single crate**: Library (`src/lib.rs`) and binary (`src/bin/ranger/`) in one crate. No workspace.
 - **Tasks in multiple backlogs**: A task can belong to multiple backlogs via `backlog_tasks` join table, with independent positions.
 - **Subtasks are tasks**: `parent_id` on tasks — subtasks get full task capabilities.
 - **No compile-time checked queries**: Using `sqlx::query_as` with runtime binding, not `query_as!` macros. No need for `DATABASE_URL` at build time.
-- **Dependencies unpinned**: `Cargo.toml` uses `"*"` versions; `Cargo.lock` pins exact versions.
 
 ## Testing
 
 Tests use `tempfile` for isolated SQLite databases. Each test creates its own DB — no shared state.
 
-The integration test (`crates/ranger-cli/tests/cli.rs`) exercises the full workflow via the compiled binary using `assert_cmd`.
+The integration test (`tests/cli.rs`) exercises the full workflow via the compiled binary using `assert_cmd`.
 
 ## Gotchas
 

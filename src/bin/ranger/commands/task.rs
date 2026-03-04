@@ -1,7 +1,7 @@
 use clap::Subcommand;
-use ranger_lib::db::SqlitePool;
-use ranger_lib::models::Task;
-use ranger_lib::ops;
+use ranger::db::SqlitePool;
+use ranger::models::Task;
+use ranger::ops;
 
 use crate::output;
 

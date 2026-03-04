@@ -44,7 +44,7 @@ The webapp uses an expanding modal for editing tasks — no cluttered inline edi
 Build and install:
 
 ```
-cargo install --path crates/ranger-cli
+cargo install --path .
 ```
 
 Or run directly:
@@ -71,10 +71,10 @@ The database lives at `$XDG_DATA_HOME/ranger/ranger.db` by default. Override wit
 
 ## Architecture
 
-Ranger ships as three artifacts from one Rust codebase:
+Ranger is a single Rust crate with a library and binary target:
 
-- **Library** (`ranger-lib`) — core data model, database operations, key generation
-- **CLI** (`ranger-cli`) — clap-based binary for humans and AI agents
+- **Library** (`ranger`) — core data model, database operations, key generation
+- **CLI** (`ranger` binary) — clap-based binary for humans and AI agents
 - **Webapp** — for human use (planned)
 
 The CLI exists primarily so AI agents can manage tasks programmatically. The webapp exists for humans who prefer a visual interface.

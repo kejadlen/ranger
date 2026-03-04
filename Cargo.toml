@@ -1,3 +1,24 @@
-[workspace]
-members = ["crates/ranger-lib", "crates/ranger-cli"]
-resolver = "2"
+[package]
+name = "ranger"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ranger"
+path = "src/bin/ranger/main.rs"
+
+[dependencies]
+anyhow = "*"
+chrono = { version = "*", features = ["serde"] }
+clap = { version = "*", features = ["derive", "env"] }
+rand = "0.9"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+sqlx = { version = "*", features = ["runtime-tokio", "sqlite"] }
+thiserror = "*"
+tokio = { version = "*", features = ["full"] }
+xdg = "*"
+
+[dev-dependencies]
+assert_cmd = "*"
+tempfile = "*"

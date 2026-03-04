@@ -61,7 +61,7 @@ fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db);
-    let pool = ranger_lib::db::connect(&db_path).await?;
+    let pool = ranger::db::connect(&db_path).await?;
 
     match cli.command {
         Commands::Backlog { command } => {
