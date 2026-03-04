@@ -74,6 +74,8 @@ ranger task move <key> --backlog <key> --after <key>          # place after a ta
 
 Top of the queue = most important. Ask the user where a task should go if priority isn't obvious. Don't just append everything to the bottom — a backlog that isn't ordered isn't useful.
 
+**Bias toward quick wins**: Small, easy tasks should be prioritized higher by default — even if they're just nice-to-haves. A 5-minute fix that improves quality of life is worth doing before a multi-hour feature. When suggesting priority, bump quick wins up rather than defaulting them to the bottom.
+
 Use `--json` on any command when you need structured output.
 
 ### Working in the Open

@@ -40,6 +40,29 @@ impl std::fmt::Display for State {
     }
 }
 
+impl sqlx::Type<sqlx::Sqlite> for State {
+    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
+        <str as sqlx::Type<sqlx::Sqlite>>::type_info()
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for State {
+    fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
+        s.parse::<State>()
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)).into())
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Sqlite> for State {
+    fn encode_by_ref(
+        &self,
+        buf: &mut <sqlx::Sqlite as sqlx::Database>::ArgumentBuffer<'_>,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<sqlx::Sqlite>>::encode_by_ref(&self.as_str(), buf)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Backlog {
     pub id: i64,
@@ -56,7 +79,7 @@ pub struct Task {
     pub parent_id: Option<i64>,
     pub title: String,
     pub description: Option<String>,
-    pub state: String,
+    pub state: State,
     pub created_at: String,
     pub updated_at: String,
 }

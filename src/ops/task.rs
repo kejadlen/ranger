@@ -1,6 +1,6 @@
 use crate::error::RangerError;
 use crate::key;
-use crate::models::Task;
+use crate::models::{State, Task};
 use crate::position;
 use sqlx::SqlitePool;
 
@@ -8,12 +8,12 @@ pub async fn create(
     pool: &SqlitePool,
     title: &str,
     backlog_id: i64,
-    state: Option<&str>,
+    state: Option<State>,
     parent_id: Option<i64>,
     description: Option<&str>,
 ) -> Result<Task, RangerError> {
     let key = key::generate_key();
-    let state = state.unwrap_or("icebox");
+    let state = state.unwrap_or(State::Icebox);
 
     let task = sqlx::query_as::<_, Task>(
         "INSERT INTO tasks (key, parent_id, title, description, state) \
@@ -24,7 +24,7 @@ pub async fn create(
     .bind(parent_id)
     .bind(title)
     .bind(description)
-    .bind(state)
+    .bind(state.as_str())
     .fetch_one(pool)
     .await?;
 
@@ -36,7 +36,7 @@ pub async fn create(
          ORDER BY bt.position DESC LIMIT 1",
     )
     .bind(backlog_id)
-    .bind(state)
+    .bind(state.as_str())
     .fetch_optional(pool)
     .await?;
 
@@ -55,7 +55,7 @@ pub async fn create(
 pub async fn list(
     pool: &SqlitePool,
     backlog_id: i64,
-    state_filter: Option<&str>,
+    state_filter: Option<State>,
 ) -> Result<Vec<Task>, RangerError> {
     let tasks = if let Some(state) = state_filter {
         sqlx::query_as::<_, Task>(
@@ -67,7 +67,7 @@ pub async fn list(
              ORDER BY bt.position",
         )
         .bind(backlog_id)
-        .bind(state)
+        .bind(state.as_str())
         .fetch_all(pool)
         .await?
     } else {
@@ -119,7 +119,7 @@ pub async fn edit(
     task_id: i64,
     title: Option<&str>,
     description: Option<&str>,
-    state: Option<&str>,
+    state: Option<State>,
 ) -> Result<Task, RangerError> {
     if let Some(title) = title {
         sqlx::query("UPDATE tasks SET title = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
@@ -135,9 +135,9 @@ pub async fn edit(
             .execute(pool)
             .await?;
     }
-    if let Some(state) = state {
+    if let Some(state) = &state {
         sqlx::query("UPDATE tasks SET state = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
-            .bind(state)
+            .bind(state.as_str())
             .bind(task_id)
             .execute(pool)
             .await?;
@@ -255,6 +255,7 @@ pub async fn delete(pool: &SqlitePool, task_id: i64) -> Result<(), RangerError> 
 mod tests {
     use super::*;
     use crate::db;
+    use crate::models::State;
     use crate::ops::backlog;
     use tempfile::tempdir;
 
@@ -273,7 +274,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(task.title, "My Task");
-        assert_eq!(task.state, "icebox");
+        assert_eq!(task.state, State::Icebox);
         assert!(!task.key.is_empty());
 
         // Verify backlog_tasks join row exists
@@ -316,15 +317,15 @@ mod tests {
         create(&pool, "Icebox task", bl.id, None, None, None)
             .await
             .unwrap();
-        create(&pool, "Queued task", bl.id, Some("queued"), None, None)
+        create(&pool, "Queued task", bl.id, Some(State::Queued), None, None)
             .await
             .unwrap();
 
-        let icebox = list(&pool, bl.id, Some("icebox")).await.unwrap();
+        let icebox = list(&pool, bl.id, Some(State::Icebox)).await.unwrap();
         assert_eq!(icebox.len(), 1);
         assert_eq!(icebox[0].title, "Icebox task");
 
-        let queued = list(&pool, bl.id, Some("queued")).await.unwrap();
+        let queued = list(&pool, bl.id, Some(State::Queued)).await.unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].title, "Queued task");
     }
@@ -354,14 +355,14 @@ mod tests {
             task.id,
             Some("Updated"),
             Some("A description"),
-            Some("queued"),
+            Some(State::Queued),
         )
         .await
         .unwrap();
 
         assert_eq!(updated.title, "Updated");
         assert_eq!(updated.description.as_deref(), Some("A description"));
-        assert_eq!(updated.state, "queued");
+        assert_eq!(updated.state, State::Queued);
     }
 
     #[tokio::test]

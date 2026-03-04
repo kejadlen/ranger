@@ -1,6 +1,6 @@
 use clap::Subcommand;
 use ranger::db::SqlitePool;
-use ranger::models::Task;
+use ranger::models::{State, Task};
 use ranger::ops;
 
 use crate::output;
@@ -107,11 +107,16 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
                 None
             };
 
+            let state = state
+                .map(|s| s.parse::<State>())
+                .transpose()
+                .map_err(|e| anyhow::anyhow!(e))?;
+
             let task = ops::task::create(
                 pool,
                 &title,
                 bl.id,
-                state.as_deref(),
+                state,
                 parent_id,
                 description.as_deref(),
             )
@@ -127,16 +132,21 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
             output::print(&task, json, print_task);
         }
         TaskCommands::List { backlog, state } => {
+            let state = state
+                .map(|s| s.parse::<State>())
+                .transpose()
+                .map_err(|e| anyhow::anyhow!(e))?;
+
             if let Some(backlog_key) = &backlog {
                 let bl = ops::backlog::get_by_key_prefix(pool, backlog_key).await?;
-                let tasks = ops::task::list(pool, bl.id, state.as_deref()).await?;
+                let tasks = ops::task::list(pool, bl.id, state).await?;
                 output::print_list(&tasks, json, print_task);
             } else {
                 // List all tasks (no backlog filter)
                 let backlogs = ops::backlog::list(pool).await?;
                 let mut all_tasks = Vec::new();
                 for bl in &backlogs {
-                    let tasks = ops::task::list(pool, bl.id, state.as_deref()).await?;
+                    let tasks = ops::task::list(pool, bl.id, state.clone()).await?;
                     for t in tasks {
                         if !all_tasks.iter().any(|at: &Task| at.id == t.id) {
                             all_tasks.push(t);
@@ -189,13 +199,18 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
             description,
             state,
         } => {
+            let state = state
+                .map(|s| s.parse::<State>())
+                .transpose()
+                .map_err(|e| anyhow::anyhow!(e))?;
+
             let task = ops::task::get_by_key_prefix(pool, &key).await?;
             let updated = ops::task::edit(
                 pool,
                 task.id,
                 title.as_deref(),
                 description.as_deref(),
-                state.as_deref(),
+                state,
             )
             .await?;
             output::print(&updated, json, print_task);
