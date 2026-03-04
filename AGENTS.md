@@ -61,7 +61,23 @@ ranger task create "Title" --backlog <key> --state queued     # committed work
 ranger task create "Subtask" --backlog <key> --parent <key>   # subtask
 ```
 
+### Prioritization
+
+When adding queued tasks, consider where they belong relative to existing work. New tasks land at the bottom by default — reposition them if they're higher priority:
+
+```bash
+ranger task list --backlog <key> --state queued               # see current order
+ranger task move <key> --backlog <key> --before <key>         # place before a task
+ranger task move <key> --backlog <key> --after <key>          # place after a task
+```
+
+Top of the queue = most important. Ask the user where a task should go if priority isn't obvious. Don't just append everything to the bottom — a backlog that isn't ordered isn't useful.
+
 Use `--json` on any command when you need structured output.
+
+### Working in the Open
+
+Always use the `working-in-the-open` skill when working on ranger tasks. Use `ranger comment add` to post updates instead of GitHub issue comments.
 
 ### Conventions
 
@@ -69,8 +85,6 @@ Use `--json` on any command when you need structured output.
 - **Queued**: committed, ordered by priority (top = most important)
 - **In Progress**: actively being worked on
 - **Done**: finished
-
-Add comments liberally — they serve as a decision log for future sessions.
 
 ## Architecture
 
