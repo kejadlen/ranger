@@ -448,7 +448,9 @@ mod tests {
             .unwrap();
 
         // Move t3 before t1 — should produce order: t3, t1, t2
-        move_task(&pool, t3.id, bl.id, Some(t1.id), None).await.unwrap();
+        move_task(&pool, t3.id, bl.id, Some(t1.id), None)
+            .await
+            .unwrap();
 
         let tasks = list(&pool, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t3.id, "t3 should be first");
@@ -471,7 +473,9 @@ mod tests {
             .unwrap();
 
         // Move t1 after t3 — should produce order: t2, t3, t1
-        move_task(&pool, t1.id, bl.id, None, Some(t3.id)).await.unwrap();
+        move_task(&pool, t1.id, bl.id, None, Some(t3.id))
+            .await
+            .unwrap();
 
         let tasks = list(&pool, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t2.id, "t2 should be first");

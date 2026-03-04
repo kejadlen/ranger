@@ -1,3 +1,6 @@
+# Run all checks by default
+default: all
+
 # Format all code
 fmt:
     cargo fmt --all
