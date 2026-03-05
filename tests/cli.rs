@@ -110,9 +110,15 @@ fn full_workflow() {
     assert_eq!(detail["tags"][0]["name"], "urgent");
     assert_eq!(detail["blockers"].as_array().unwrap().len(), 1);
 
-    // Create a third task and use edit --before to reposition it
+    // Create two queued tasks and use edit --before to reposition within the same state
     let output = ranger(db_path)
         .args(["task", "create", "Third task", "--state", "queued"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = ranger(db_path)
+        .args(["task", "create", "Fourth task", "--state", "queued"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -121,54 +127,59 @@ fn full_workflow() {
         .args(["task", "list", "--json", "--state", "queued"])
         .output()
         .unwrap();
-    let tasks_before_move: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let tasks_before_move = tasks_before_move.as_array().unwrap();
-    // Third task should be after Second task (both queued, but Second was icebox — actually
-    // let's just get the keys and verify edit --before works)
-    let t3_key = tasks_before_move
+    let queued_tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let queued_tasks = queued_tasks.as_array().unwrap();
+    let t3_key = queued_tasks
         .iter()
         .find(|t| t["title"] == "Third task")
         .unwrap()["key"]
         .as_str()
         .unwrap()
         .to_string();
+    let t4_key = queued_tasks
+        .iter()
+        .find(|t| t["title"] == "Fourth task")
+        .unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
-    // Edit Third task: change title AND reposition before First task
+    // Edit Fourth task: change title AND reposition before Third task
     let output = ranger(db_path)
         .args([
             "task",
             "edit",
-            &t3_key[..4],
+            &t4_key[..4],
             "--title",
-            "Third task (edited)",
+            "Fourth task (edited)",
             "--before",
-            &t1_key[..4],
+            &t3_key[..4],
         ])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Third task (edited)"));
+    assert!(stdout.contains("Fourth task (edited)"));
 
-    // Verify ordering: Third should now be before First
+    // Verify ordering within queued: Fourth should now be before Third
     let output = ranger(db_path)
-        .args(["task", "list", "--json"])
+        .args(["task", "list", "--json", "--state", "queued"])
         .output()
         .unwrap();
-    let tasks_after_move: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let tasks_after_move = tasks_after_move.as_array().unwrap();
-    let titles: Vec<&str> = tasks_after_move
+    let queued_after: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let queued_after = queued_after.as_array().unwrap();
+    let titles: Vec<&str> = queued_after
         .iter()
         .map(|t| t["title"].as_str().unwrap())
         .collect();
-    let third_pos = titles
+    let fourth_pos = titles
         .iter()
-        .position(|t| *t == "Third task (edited)")
+        .position(|t| *t == "Fourth task (edited)")
         .unwrap();
-    let first_pos = titles.iter().position(|t| *t == "First task").unwrap();
+    let third_pos = titles.iter().position(|t| *t == "Third task").unwrap();
     assert!(
-        third_pos < first_pos,
-        "Third task should be before First task after edit --before, got: {:?}",
+        fourth_pos < third_pos,
+        "Fourth should be before Third after edit --before, got: {:?}",
         titles
     );
 
@@ -186,5 +197,5 @@ fn full_workflow() {
         .unwrap();
     assert!(output.status.success());
     let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(tasks.as_array().unwrap().len(), 2);
+    assert_eq!(tasks.as_array().unwrap().len(), 3);
 }

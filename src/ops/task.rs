@@ -145,7 +145,7 @@ pub async fn edit(
             .await?;
 
         if old_state != *new_state {
-            reposition_for_state_change(&mut *conn, task_id, &old_state, new_state).await?;
+            reorder(&mut *conn, task_id, &old_state, new_state).await?;
         }
     }
 
@@ -157,11 +157,60 @@ pub async fn edit(
     Ok(task)
 }
 
-/// Reposition a task when its state changes.
+pub enum Placement<'a> {
+    Before(&'a Task),
+    After(&'a Task),
+    Between { after: &'a Task, before: &'a Task },
+}
+
+impl<'a> Placement<'a> {
+    pub fn anchors(&self) -> impl Iterator<Item = &Task> {
+        match self {
+            Placement::Before(t) | Placement::After(t) => vec![*t],
+            Placement::Between { after, before } => vec![*after, *before],
+        }
+        .into_iter()
+    }
+}
+
+pub async fn move_task(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    placement: Placement<'_>,
+) -> Result<(), RangerError> {
+    for anchor in placement.anchors() {
+        if anchor.state != task.state {
+            return Err(RangerError::StateMismatch {
+                task_state: task.state.to_string(),
+                anchor_state: anchor.state.to_string(),
+            });
+        }
+    }
+
+    let new_pos = match placement {
+        Placement::After(anchor) => {
+            let next =
+                next_position_after(&mut *conn, task.backlog_id, task.id, &anchor.position).await?;
+            position::between(&anchor.position, next.as_deref().unwrap_or(""))
+        }
+        Placement::Before(anchor) => {
+            let prev = prev_position_before(&mut *conn, task.backlog_id, task.id, &anchor.position)
+                .await?;
+            position::between(prev.as_deref().unwrap_or(""), &anchor.position)
+        }
+        Placement::Between { after, before } => {
+            position::between(&after.position, &before.position)
+        }
+    };
+
+    set_position(&mut *conn, task.id, &new_pos).await
+}
+
+/// Reorder a task's position when its state changes.
 ///
 /// Moving up (toward done): place at end of target state group.
 /// Moving down (toward icebox): place at beginning of target state group.
-async fn reposition_for_state_change(
+async fn reorder(
     conn: &mut SqliteConnection,
     task_id: i64,
     old_state: &State,
@@ -175,177 +224,154 @@ async fn reposition_for_state_change(
     let moving_up = new_state.rank() > old_state.rank();
 
     let new_pos = if moving_up {
-        // End of target state group: after the last task with this state
-        let last_in_state: Option<String> = sqlx::query_scalar(
-            "SELECT position FROM tasks \
-             WHERE backlog_id = ? AND state = ? AND id != ? \
-             ORDER BY position DESC LIMIT 1",
-        )
-        .bind(backlog_id)
-        .bind(new_state.as_str())
-        .bind(task_id)
-        .fetch_optional(&mut *conn)
-        .await?;
+        let last_in_state =
+            last_position_in_state(&mut *conn, backlog_id, task_id, new_state).await?;
 
         match last_in_state {
             Some(last) => {
-                let next: Option<String> = sqlx::query_scalar(
-                    "SELECT position FROM tasks \
-                     WHERE backlog_id = ? AND id != ? AND position > ? \
-                     ORDER BY position ASC LIMIT 1",
-                )
-                .bind(backlog_id)
-                .bind(task_id)
-                .bind(&last)
-                .fetch_optional(&mut *conn)
-                .await?;
+                let next = next_position_after(&mut *conn, backlog_id, task_id, &last).await?;
                 position::between(&last, next.as_deref().unwrap_or(""))
             }
             None => {
-                // No other tasks in this state — place at end of backlog
-                let last_pos: Option<String> = sqlx::query_scalar(
-                    "SELECT position FROM tasks \
-                     WHERE backlog_id = ? AND id != ? \
-                     ORDER BY position DESC LIMIT 1",
-                )
-                .bind(backlog_id)
-                .bind(task_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-                position::between(last_pos.as_deref().unwrap_or(""), "")
+                let last = last_position(&mut *conn, backlog_id, task_id).await?;
+                position::between(last.as_deref().unwrap_or(""), "")
             }
         }
     } else {
-        // Beginning of target state group: before the first task with this state
-        let first_in_state: Option<String> = sqlx::query_scalar(
-            "SELECT position FROM tasks \
-             WHERE backlog_id = ? AND state = ? AND id != ? \
-             ORDER BY position ASC LIMIT 1",
-        )
-        .bind(backlog_id)
-        .bind(new_state.as_str())
-        .bind(task_id)
-        .fetch_optional(&mut *conn)
-        .await?;
+        let first_in_state =
+            first_position_in_state(&mut *conn, backlog_id, task_id, new_state).await?;
 
         match first_in_state {
             Some(first) => {
-                let prev: Option<String> = sqlx::query_scalar(
-                    "SELECT position FROM tasks \
-                     WHERE backlog_id = ? AND id != ? AND position < ? \
-                     ORDER BY position DESC LIMIT 1",
-                )
-                .bind(backlog_id)
-                .bind(task_id)
-                .bind(&first)
-                .fetch_optional(&mut *conn)
-                .await?;
+                let prev = prev_position_before(&mut *conn, backlog_id, task_id, &first).await?;
                 position::between(prev.as_deref().unwrap_or(""), &first)
             }
             None => {
-                // No other tasks in this state — place at beginning of backlog
-                let first_pos: Option<String> = sqlx::query_scalar(
-                    "SELECT position FROM tasks \
-                     WHERE backlog_id = ? AND id != ? \
-                     ORDER BY position ASC LIMIT 1",
-                )
-                .bind(backlog_id)
-                .bind(task_id)
-                .fetch_optional(&mut *conn)
-                .await?;
-                position::between("", first_pos.as_deref().unwrap_or(""))
+                let first = first_position(&mut *conn, backlog_id, task_id).await?;
+                position::between("", first.as_deref().unwrap_or(""))
             }
         }
     };
 
-    sqlx::query("UPDATE tasks SET position = ? WHERE id = ?")
-        .bind(&new_pos)
-        .bind(task_id)
-        .execute(&mut *conn)
-        .await?;
-
-    Ok(())
+    set_position(&mut *conn, task_id, &new_pos).await
 }
 
-pub async fn move_task(
+// -- Position query helpers --
+
+async fn last_position(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+    exclude_task_id: i64,
+) -> Result<Option<String>, RangerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT position FROM tasks \
+         WHERE backlog_id = ? AND id != ? \
+         ORDER BY position DESC LIMIT 1",
+    )
+    .bind(backlog_id)
+    .bind(exclude_task_id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+async fn first_position(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+    exclude_task_id: i64,
+) -> Result<Option<String>, RangerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT position FROM tasks \
+         WHERE backlog_id = ? AND id != ? \
+         ORDER BY position ASC LIMIT 1",
+    )
+    .bind(backlog_id)
+    .bind(exclude_task_id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+async fn next_position_after(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+    exclude_task_id: i64,
+    pos: &str,
+) -> Result<Option<String>, RangerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT position FROM tasks \
+         WHERE backlog_id = ? AND id != ? AND position > ? \
+         ORDER BY position ASC LIMIT 1",
+    )
+    .bind(backlog_id)
+    .bind(exclude_task_id)
+    .bind(pos)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+async fn prev_position_before(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+    exclude_task_id: i64,
+    pos: &str,
+) -> Result<Option<String>, RangerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT position FROM tasks \
+         WHERE backlog_id = ? AND id != ? AND position < ? \
+         ORDER BY position DESC LIMIT 1",
+    )
+    .bind(backlog_id)
+    .bind(exclude_task_id)
+    .bind(pos)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+async fn last_position_in_state(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+    exclude_task_id: i64,
+    state: &State,
+) -> Result<Option<String>, RangerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT position FROM tasks \
+         WHERE backlog_id = ? AND state = ? AND id != ? \
+         ORDER BY position DESC LIMIT 1",
+    )
+    .bind(backlog_id)
+    .bind(state.as_str())
+    .bind(exclude_task_id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+async fn first_position_in_state(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+    exclude_task_id: i64,
+    state: &State,
+) -> Result<Option<String>, RangerError> {
+    Ok(sqlx::query_scalar(
+        "SELECT position FROM tasks \
+         WHERE backlog_id = ? AND state = ? AND id != ? \
+         ORDER BY position ASC LIMIT 1",
+    )
+    .bind(backlog_id)
+    .bind(state.as_str())
+    .bind(exclude_task_id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+async fn set_position(
     conn: &mut SqliteConnection,
     task_id: i64,
-    before_task_id: Option<i64>,
-    after_task_id: Option<i64>,
+    pos: &str,
 ) -> Result<(), RangerError> {
-    // Look up the task's backlog_id so position queries are scoped correctly
-    let backlog_id: i64 = sqlx::query_scalar("SELECT backlog_id FROM tasks WHERE id = ?")
-        .bind(task_id)
-        .fetch_one(&mut *conn)
-        .await?;
-
-    let upper: Option<String> = if let Some(id) = before_task_id {
-        sqlx::query_scalar("SELECT position FROM tasks WHERE id = ? AND backlog_id = ?")
-            .bind(id)
-            .bind(backlog_id)
-            .fetch_optional(&mut *conn)
-            .await?
-    } else {
-        None
-    };
-
-    let lower: Option<String> = if let Some(id) = after_task_id {
-        sqlx::query_scalar("SELECT position FROM tasks WHERE id = ? AND backlog_id = ?")
-            .bind(id)
-            .bind(backlog_id)
-            .fetch_optional(&mut *conn)
-            .await?
-    } else {
-        None
-    };
-
-    let new_pos = match (lower.as_deref(), upper.as_deref()) {
-        (None, None) => {
-            let last_pos: Option<String> = sqlx::query_scalar(
-                "SELECT position FROM tasks \
-                 WHERE backlog_id = ? \
-                 ORDER BY position DESC LIMIT 1",
-            )
-            .bind(backlog_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-            position::between(last_pos.as_deref().unwrap_or(""), "")
-        }
-        (Some(low), None) => {
-            let next: Option<String> = sqlx::query_scalar(
-                "SELECT position FROM tasks \
-                 WHERE backlog_id = ? AND id != ? AND position > ? \
-                 ORDER BY position ASC LIMIT 1",
-            )
-            .bind(backlog_id)
-            .bind(task_id)
-            .bind(low)
-            .fetch_optional(&mut *conn)
-            .await?;
-            position::between(low, next.as_deref().unwrap_or(""))
-        }
-        (None, Some(up)) => {
-            let prev: Option<String> = sqlx::query_scalar(
-                "SELECT position FROM tasks \
-                 WHERE backlog_id = ? AND id != ? AND position < ? \
-                 ORDER BY position DESC LIMIT 1",
-            )
-            .bind(backlog_id)
-            .bind(task_id)
-            .bind(up)
-            .fetch_optional(&mut *conn)
-            .await?;
-            position::between(prev.as_deref().unwrap_or(""), up)
-        }
-        (Some(low), Some(up)) => position::between(low, up),
-    };
-
     sqlx::query("UPDATE tasks SET position = ? WHERE id = ?")
-        .bind(&new_pos)
+        .bind(pos)
         .bind(task_id)
         .execute(&mut *conn)
         .await?;
-
     Ok(())
 }
 
@@ -540,271 +566,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn move_task_before() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "Third",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Move t3 before t1 — should produce order: t3, t1, t2
-        move_task(&mut conn, t3.id, Some(t1.id), None)
-            .await
-            .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t3.id, "t3 should be first");
-        assert_eq!(tasks[1].id, t1.id, "t1 should be second");
-        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
-    }
-
-    #[tokio::test]
-    async fn move_task_after() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "Third",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Move t1 after t3 — should produce order: t2, t3, t1
-        move_task(&mut conn, t1.id, None, Some(t3.id))
-            .await
-            .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t2.id, "t2 should be first");
-        assert_eq!(tasks[1].id, t3.id, "t3 should be second");
-        assert_eq!(tasks[2].id, t1.id, "t1 should be third");
-    }
-
-    #[tokio::test]
-    async fn move_task_after_into_middle() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "Third",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Move t3 after t1 (but before t2) — should produce order: t1, t3, t2
-        move_task(&mut conn, t3.id, None, Some(t1.id))
-            .await
-            .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t1.id, "t1 should be first");
-        assert_eq!(tasks[1].id, t3.id, "t3 should be second (after t1)");
-        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
-    }
-
-    #[tokio::test]
-    async fn move_task_before_from_middle() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "Third",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Move t1 before t3 (but after t2) — should produce order: t2, t1, t3
-        move_task(&mut conn, t1.id, Some(t3.id), None)
-            .await
-            .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t2.id, "t2 should be first");
-        assert_eq!(tasks[1].id, t1.id, "t1 should be second (before t3)");
-        assert_eq!(tasks[2].id, t3.id, "t3 should be third");
-    }
-
-    #[tokio::test]
-    async fn move_task_between() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "Third",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Move t3 after t1 and before t2 — should produce order: t1, t3, t2
-        move_task(&mut conn, t3.id, Some(t2.id), Some(t1.id))
-            .await
-            .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t1.id, "t1 should be first");
-        assert_eq!(tasks[1].id, t3.id, "t3 should be second");
-        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
-    }
-
-    #[tokio::test]
     async fn delete_task() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
@@ -931,12 +692,214 @@ mod tests {
         .await
         .unwrap();
 
-        // Move first task to end (no before/after)
-        move_task(&mut conn, t1.id, None, None).await.unwrap();
+        // Move first task after second
+        move_task(&mut conn, &t1, Placement::After(&t2))
+            .await
+            .unwrap();
 
         let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t2.id);
         assert_eq!(tasks[1].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn move_task_before() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        move_task(&mut conn, &t3, Placement::Before(&t1))
+            .await
+            .unwrap();
+
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t3.id);
+        assert_eq!(tasks[1].id, t1.id);
+        assert_eq!(tasks[2].id, t2.id);
+    }
+
+    #[tokio::test]
+    async fn move_task_after() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        move_task(&mut conn, &t1, Placement::After(&t3))
+            .await
+            .unwrap();
+
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t2.id);
+        assert_eq!(tasks[1].id, t3.id);
+        assert_eq!(tasks[2].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn move_task_between() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        move_task(
+            &mut conn,
+            &t3,
+            Placement::Between {
+                after: &t1,
+                before: &t2,
+            },
+        )
+        .await
+        .unwrap();
+
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t1.id);
+        assert_eq!(tasks[1].id, t3.id);
+        assert_eq!(tasks[2].id, t2.id);
+    }
+
+    #[tokio::test]
+    async fn move_task_rejects_cross_state() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let queued = create(
+            &mut conn,
+            CreateTask {
+                title: "Q",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let done = create(
+            &mut conn,
+            CreateTask {
+                title: "D",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let err = move_task(&mut conn, &queued, Placement::Before(&done))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("queued"));
+        assert!(err.to_string().contains("done"));
     }
 
     #[tokio::test]
@@ -1060,7 +1023,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn state_change_same_state_does_not_reposition() {
+    async fn state_change_same_state_does_not_reorder() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
         let bl = backlog::create(&mut conn, "Test").await.unwrap();

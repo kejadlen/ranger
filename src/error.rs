@@ -4,6 +4,11 @@ pub enum RangerError {
     KeyNotFound(String),
     #[error("ambiguous prefix '{0}' matches multiple keys")]
     AmbiguousPrefix(String),
+    #[error("can't move {task_state} task relative to {anchor_state} task")]
+    StateMismatch {
+        task_state: String,
+        anchor_state: String,
+    },
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("migration error: {0}")]

@@ -1,12 +1,13 @@
 use clap::{Args, Subcommand};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, bail};
 use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::models::{State, Task};
 use ranger::ops;
+use ranger::ops::task::Placement;
 
 use crate::output;
 
-/// Positioning flags shared by create and move.
+/// Positioning flags shared by create, edit, and move.
 #[derive(Args)]
 pub struct PositionArgs {
     /// Place before this task key
@@ -18,18 +19,39 @@ pub struct PositionArgs {
 }
 
 impl PositionArgs {
-    async fn resolve(self, conn: &mut SqliteConnection) -> Result<(Option<i64>, Option<i64>)> {
-        let before_id = if let Some(k) = &self.before {
-            Some(ops::task::get_by_key_prefix(conn, k).await?.id)
-        } else {
-            None
-        };
-        let after_id = if let Some(k) = &self.after {
-            Some(ops::task::get_by_key_prefix(conn, k).await?.id)
-        } else {
-            None
-        };
-        Ok((before_id, after_id))
+    async fn resolve(self, conn: &mut SqliteConnection) -> Result<Option<PositionAnchors>> {
+        match (self.before, self.after) {
+            (None, None) => Ok(None),
+            (Some(b), None) => {
+                let before = ops::task::get_by_key_prefix(conn, &b).await?;
+                Ok(Some(PositionAnchors::Before(before)))
+            }
+            (None, Some(a)) => {
+                let after = ops::task::get_by_key_prefix(conn, &a).await?;
+                Ok(Some(PositionAnchors::After(after)))
+            }
+            (Some(b), Some(a)) => {
+                let before = ops::task::get_by_key_prefix(conn, &b).await?;
+                let after = ops::task::get_by_key_prefix(conn, &a).await?;
+                Ok(Some(PositionAnchors::Between { before, after }))
+            }
+        }
+    }
+}
+
+enum PositionAnchors {
+    Before(Task),
+    After(Task),
+    Between { before: Task, after: Task },
+}
+
+impl PositionAnchors {
+    fn as_placement(&self) -> Placement<'_> {
+        match self {
+            PositionAnchors::Before(t) => Placement::Before(t),
+            PositionAnchors::After(t) => Placement::After(t),
+            PositionAnchors::Between { before, after } => Placement::Between { before, after },
+        }
     }
 }
 
@@ -127,7 +149,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             } else {
                 None
             };
-            let (before_id, after_id) = position.resolve(&mut tx).await?;
+            let anchors = position.resolve(&mut tx).await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             let task = ops::task::create(
@@ -142,8 +164,8 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             )
             .await?;
 
-            if before_id.is_some() || after_id.is_some() {
-                ops::task::move_task(&mut tx, task.id, before_id, after_id).await?;
+            if let Some(ref anchors) = anchors {
+                ops::task::move_task(&mut tx, &task, anchors.as_placement()).await?;
             }
 
             if let Some(tags) = &tag {
@@ -228,10 +250,9 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         } => {
             let mut conn = pool.acquire().await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
+            let anchors = position.resolve(&mut conn).await?;
 
             let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
-            let (before_id, after_id) = position.resolve(&mut conn).await?;
-
             let updated = ops::task::edit(
                 &mut conn,
                 task.id,
@@ -241,8 +262,8 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             )
             .await?;
 
-            if before_id.is_some() || after_id.is_some() {
-                ops::task::move_task(&mut conn, updated.id, before_id, after_id).await?;
+            if let Some(ref anchors) = anchors {
+                ops::task::move_task(&mut conn, &updated, anchors.as_placement()).await?;
             }
 
             output::print(&updated, json, print_task);
@@ -250,10 +271,15 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         TaskCommands::Move { key, position } => {
             let mut conn = pool.acquire().await?;
             let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
-            let (before_id, after_id) = position.resolve(&mut conn).await?;
+            let anchors = position.resolve(&mut conn).await?;
 
-            ops::task::move_task(&mut conn, task.id, before_id, after_id).await?;
-            println!("Moved {} {}", &task.key[..8], task.title);
+            match anchors {
+                Some(anchors) => {
+                    ops::task::move_task(&mut conn, &task, anchors.as_placement()).await?;
+                    println!("Moved {} {}", &task.key[..8], task.title);
+                }
+                None => bail!("--before or --after is required"),
+            }
         }
         TaskCommands::Delete { key } => {
             let mut conn = pool.acquire().await?;
