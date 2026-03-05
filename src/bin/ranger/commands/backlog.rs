@@ -18,6 +18,7 @@ pub enum BacklogCommands {
     /// Show a backlog's details
     Show {
         /// Backlog name
+        #[arg(env = "RANGER_DEFAULT_BACKLOG")]
         name: String,
     },
 }
