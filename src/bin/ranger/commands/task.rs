@@ -39,8 +39,8 @@ pub enum TaskCommands {
     Create {
         /// Task title
         title: String,
-        /// Backlog key or prefix to add the task to
-        #[arg(long)]
+        /// Backlog key or prefix
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
         backlog: String,
         /// Task description
         #[arg(long)]
@@ -60,7 +60,7 @@ pub enum TaskCommands {
     /// List tasks
     List {
         /// Filter by backlog key or prefix
-        #[arg(long)]
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
         backlog: Option<String>,
         /// Filter by state
         #[arg(long)]
@@ -90,7 +90,7 @@ pub enum TaskCommands {
         /// Task key or prefix
         key: String,
         /// Backlog to reorder within
-        #[arg(long)]
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
         backlog: String,
         #[command(flatten)]
         position: PositionArgs,
@@ -100,6 +100,7 @@ pub enum TaskCommands {
         /// Task key or prefix
         task: String,
         /// Backlog key or prefix
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
         backlog: String,
     },
     /// Remove a task from a backlog
@@ -107,6 +108,7 @@ pub enum TaskCommands {
         /// Task key or prefix
         task: String,
         /// Backlog key or prefix
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
         backlog: String,
     },
     /// Delete a task entirely
