@@ -21,6 +21,16 @@ impl State {
             State::Done => "done",
         }
     }
+
+    /// Numeric rank following the natural flow: icebox(0) → queued(1) → in_progress(2) → done(3).
+    pub fn rank(&self) -> u8 {
+        match self {
+            State::Icebox => 0,
+            State::Queued => 1,
+            State::InProgress => 2,
+            State::Done => 3,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

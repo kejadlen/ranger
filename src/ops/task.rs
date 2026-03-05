@@ -131,12 +131,22 @@ pub async fn edit(
             .execute(&mut *conn)
             .await?;
     }
-    if let Some(state) = &state {
+    if let Some(new_state) = &state {
+        // Fetch the current state to determine direction
+        let old_state: State = sqlx::query_scalar("SELECT state FROM tasks WHERE id = ?")
+            .bind(task_id)
+            .fetch_one(&mut *conn)
+            .await?;
+
         sqlx::query("UPDATE tasks SET state = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
-            .bind(state.as_str())
+            .bind(new_state.as_str())
             .bind(task_id)
             .execute(&mut *conn)
             .await?;
+
+        if old_state != *new_state {
+            reposition_for_state_change(&mut *conn, task_id, &old_state, new_state).await?;
+        }
     }
 
     let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?");
@@ -145,6 +155,116 @@ pub async fn edit(
         .fetch_one(&mut *conn)
         .await?;
     Ok(task)
+}
+
+/// Reposition a task when its state changes.
+///
+/// Moving up (toward done): place at end of target state group.
+/// Moving down (toward icebox): place at beginning of target state group.
+async fn reposition_for_state_change(
+    conn: &mut SqliteConnection,
+    task_id: i64,
+    old_state: &State,
+    new_state: &State,
+) -> Result<(), RangerError> {
+    let backlog_id: i64 = sqlx::query_scalar("SELECT backlog_id FROM tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?;
+
+    let moving_up = new_state.rank() > old_state.rank();
+
+    let new_pos = if moving_up {
+        // End of target state group: after the last task with this state
+        let last_in_state: Option<String> = sqlx::query_scalar(
+            "SELECT position FROM tasks \
+             WHERE backlog_id = ? AND state = ? AND id != ? \
+             ORDER BY position DESC LIMIT 1",
+        )
+        .bind(backlog_id)
+        .bind(new_state.as_str())
+        .bind(task_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+
+        match last_in_state {
+            Some(last) => {
+                let next: Option<String> = sqlx::query_scalar(
+                    "SELECT position FROM tasks \
+                     WHERE backlog_id = ? AND id != ? AND position > ? \
+                     ORDER BY position ASC LIMIT 1",
+                )
+                .bind(backlog_id)
+                .bind(task_id)
+                .bind(&last)
+                .fetch_optional(&mut *conn)
+                .await?;
+                position::between(&last, next.as_deref().unwrap_or(""))
+            }
+            None => {
+                // No other tasks in this state — place at end of backlog
+                let last_pos: Option<String> = sqlx::query_scalar(
+                    "SELECT position FROM tasks \
+                     WHERE backlog_id = ? AND id != ? \
+                     ORDER BY position DESC LIMIT 1",
+                )
+                .bind(backlog_id)
+                .bind(task_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+                position::between(last_pos.as_deref().unwrap_or(""), "")
+            }
+        }
+    } else {
+        // Beginning of target state group: before the first task with this state
+        let first_in_state: Option<String> = sqlx::query_scalar(
+            "SELECT position FROM tasks \
+             WHERE backlog_id = ? AND state = ? AND id != ? \
+             ORDER BY position ASC LIMIT 1",
+        )
+        .bind(backlog_id)
+        .bind(new_state.as_str())
+        .bind(task_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+
+        match first_in_state {
+            Some(first) => {
+                let prev: Option<String> = sqlx::query_scalar(
+                    "SELECT position FROM tasks \
+                     WHERE backlog_id = ? AND id != ? AND position < ? \
+                     ORDER BY position DESC LIMIT 1",
+                )
+                .bind(backlog_id)
+                .bind(task_id)
+                .bind(&first)
+                .fetch_optional(&mut *conn)
+                .await?;
+                position::between(prev.as_deref().unwrap_or(""), &first)
+            }
+            None => {
+                // No other tasks in this state — place at beginning of backlog
+                let first_pos: Option<String> = sqlx::query_scalar(
+                    "SELECT position FROM tasks \
+                     WHERE backlog_id = ? AND id != ? \
+                     ORDER BY position ASC LIMIT 1",
+                )
+                .bind(backlog_id)
+                .bind(task_id)
+                .fetch_optional(&mut *conn)
+                .await?;
+                position::between("", first_pos.as_deref().unwrap_or(""))
+            }
+        }
+    };
+
+    sqlx::query("UPDATE tasks SET position = ? WHERE id = ?")
+        .bind(&new_pos)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?;
+
+    Ok(())
 }
 
 pub async fn move_task(
@@ -817,5 +937,229 @@ mod tests {
         let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t2.id);
         assert_eq!(tasks[1].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn state_change_up_places_at_end_of_target_group() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        // Create two done tasks and one queued task
+        let d1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Done 1",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let d2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Done 2",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let q1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 1",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Move queued task to done — should land after Done 2
+        let updated = edit(&mut conn, q1.id, None, None, Some(State::Done))
+            .await
+            .unwrap();
+        assert_eq!(updated.state, State::Done);
+
+        let done = list(&mut conn, bl.id, Some(State::Done)).await.unwrap();
+        assert_eq!(done.len(), 3);
+        assert_eq!(done[0].id, d1.id);
+        assert_eq!(done[1].id, d2.id);
+        assert_eq!(
+            done[2].id, q1.id,
+            "newly done task should be at end of done group"
+        );
+    }
+
+    #[tokio::test]
+    async fn state_change_down_places_at_beginning_of_target_group() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        // Create two queued tasks and one in_progress task
+        let q1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 1",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let q2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 2",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let ip = create(
+            &mut conn,
+            CreateTask {
+                title: "In Progress",
+                backlog_id: bl.id,
+                state: Some(State::InProgress),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Move in_progress task to queued — should land before Queued 1
+        let updated = edit(&mut conn, ip.id, None, None, Some(State::Queued))
+            .await
+            .unwrap();
+        assert_eq!(updated.state, State::Queued);
+
+        let queued = list(&mut conn, bl.id, Some(State::Queued)).await.unwrap();
+        assert_eq!(queued.len(), 3);
+        assert_eq!(
+            queued[0].id, ip.id,
+            "demoted task should be at beginning of queued group"
+        );
+        assert_eq!(queued[1].id, q1.id);
+        assert_eq!(queued[2].id, q2.id);
+    }
+
+    #[tokio::test]
+    async fn state_change_same_state_does_not_reposition() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "First",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Second",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let original_pos = t1.position.clone();
+
+        // Edit to same state — position should not change
+        let updated = edit(&mut conn, t1.id, None, None, Some(State::Queued))
+            .await
+            .unwrap();
+        assert_eq!(updated.position, original_pos);
+
+        let queued = list(&mut conn, bl.id, Some(State::Queued)).await.unwrap();
+        assert_eq!(queued[0].id, t1.id);
+        assert_eq!(queued[1].id, t2.id);
+    }
+
+    #[tokio::test]
+    async fn state_change_up_to_empty_group() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued task",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Move to done (empty group) — should succeed
+        let updated = edit(&mut conn, t1.id, None, None, Some(State::Done))
+            .await
+            .unwrap();
+        assert_eq!(updated.state, State::Done);
+
+        let done = list(&mut conn, bl.id, Some(State::Done)).await.unwrap();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn state_change_down_to_empty_group() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "In progress task",
+                backlog_id: bl.id,
+                state: Some(State::InProgress),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Move to icebox (empty group) — should succeed
+        let updated = edit(&mut conn, t1.id, None, None, Some(State::Icebox))
+            .await
+            .unwrap();
+        assert_eq!(updated.state, State::Icebox);
+
+        let icebox = list(&mut conn, bl.id, Some(State::Icebox)).await.unwrap();
+        assert_eq!(icebox.len(), 1);
+        assert_eq!(icebox[0].id, t1.id);
     }
 }
