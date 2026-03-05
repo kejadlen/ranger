@@ -1,6 +1,6 @@
 ---
 name: rust-coverage
-description: Use when measuring code coverage in Rust projects, debugging uncovered lines, generating coverage reports, or setting up LLVM source-based coverage with cargo-llvm-cov
+description: Use when measuring code coverage in Rust projects, debugging uncovered lines, generating coverage reports, or setting up LLVM source-based coverage with cargo-llvm-cov or grcov
 ---
 
 # Rust Source-Based Code Coverage
@@ -99,9 +99,103 @@ fn debug_only_thing() { /* ... */ }
 
 Opt out with `--no-cfg-coverage` if these flags interfere.
 
-## Manual Workflow (Without cargo-llvm-cov)
+## grcov (Mozilla)
 
-For environments where `cargo-llvm-cov` isn't available:
+[grcov](https://github.com/mozilla/grcov) is Mozilla's coverage tool. It processes `.profraw` files (same as `cargo-llvm-cov`) but also handles `.gcda` (GCC), lcov, JaCoCo, and Go coverage. Useful when you need output formats `cargo-llvm-cov` doesn't support (Cobertura, Coveralls, covdir) or when integrating with CI systems like GitLab that expect Cobertura XML.
+
+### Prerequisites
+
+```bash
+rustup component add llvm-tools       # ships llvm-profdata + llvm-cov
+cargo install grcov                   # or download from GitHub releases
+```
+
+### Workflow
+
+```bash
+# 1. Build and test with instrumentation
+export RUSTFLAGS="-Cinstrument-coverage"
+export LLVM_PROFILE_FILE="target/coverage/%p-%m.profraw"
+cargo build
+cargo test
+
+# 2. Generate report with grcov
+grcov target/coverage \
+  --binary-path ./target/debug/ \
+  -s . \
+  -t html \
+  --branch \
+  --ignore-not-existing \
+  --keep-only 'src/*' \
+  -o ./target/debug/coverage/
+```
+
+The report lands in `target/debug/coverage/index.html`.
+
+### Output Types
+
+| `-t` value | Description |
+|------------|-------------|
+| `lcov` (default) | lcov INFO format — upload to Codecov, feed to `genhtml` |
+| `html` | Self-contained HTML report with coverage badges |
+| `cobertura` | Cobertura XML — GitLab CI integration, IDE support |
+| `cobertura-pretty` | Pretty-printed Cobertura XML |
+| `coveralls` | Coveralls JSON format |
+| `coveralls+` | Coveralls with function-level information |
+| `covdir` | Recursive JSON format |
+| `files` | List of covered/uncovered source files |
+| `markdown` | Human-readable markdown |
+
+Multiple output types at once:
+
+```bash
+grcov target/coverage \
+  --binary-path ./target/debug/ \
+  -s . \
+  --output-types html,cobertura \
+  -o ./target/coverage/
+```
+
+### Common Options
+
+```bash
+# LCOV for Codecov upload
+grcov . --binary-path ./target/debug/ -s . -t lcov --branch \
+  --ignore-not-existing -o lcov.info
+
+# Filter to only project source
+grcov . --binary-path ./target/debug/ -s . -t html \
+  --keep-only 'src/*' \
+  --ignore 'src/bin/*' \
+  -o coverage/
+
+# Coveralls upload
+grcov . --binary-path ./target/debug/ -s . -t coveralls \
+  --token "$COVERALLS_TOKEN" > coveralls.json
+
+# Exclude lines with marker comments
+grcov . --binary-path ./target/debug/ -s . -t lcov \
+  --excl-line 'LCOV_EXCL_LINE' \
+  --excl-start 'LCOV_EXCL_START' \
+  --excl-stop 'LCOV_EXCL_STOP'
+```
+
+### When to Use grcov vs cargo-llvm-cov
+
+| Scenario | Prefer |
+|----------|--------|
+| Quick local coverage check | `cargo-llvm-cov` — single command, no env vars |
+| Fail CI on threshold | `cargo-llvm-cov` — `--fail-under-lines` built in |
+| GitLab CI with Cobertura | `grcov` — native Cobertura output |
+| Coveralls integration | `grcov` — native Coveralls format |
+| Multiple output formats at once | `grcov` — `--output-types html,cobertura` |
+| Coverage badges for GitHub Pages | `grcov` — generates badges + `coverage.json` |
+| Mixed language project (Rust + C) | `grcov` — handles `.gcda` + `.profraw` together |
+| Doctests coverage | `cargo-llvm-cov` — `--doctests` flag (nightly) |
+
+## Manual Workflow (Without cargo-llvm-cov or grcov)
+
+For environments where neither wrapper is available:
 
 ```bash
 # 1. Build with coverage
