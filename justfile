@@ -19,3 +19,7 @@ coverage:
 
 # Run all checks: fmt, clippy, tests with coverage
 all: fmt clippy coverage
+
+# Install ranger from source
+install:
+    cargo install --locked --path .
