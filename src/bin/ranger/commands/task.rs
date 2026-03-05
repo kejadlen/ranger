@@ -1,10 +1,37 @@
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::models::{State, Task};
 use ranger::ops;
 
 use crate::output;
+
+/// Positioning flags shared by create and move.
+#[derive(Args)]
+pub struct PositionArgs {
+    /// Place before this task key
+    #[arg(long)]
+    before: Option<String>,
+    /// Place after this task key
+    #[arg(long)]
+    after: Option<String>,
+}
+
+impl PositionArgs {
+    async fn resolve(self, pool: &SqlitePool) -> Result<(Option<i64>, Option<i64>)> {
+        let before_id = if let Some(k) = &self.before {
+            Some(ops::task::get_by_key_prefix(pool, k).await?.id)
+        } else {
+            None
+        };
+        let after_id = if let Some(k) = &self.after {
+            Some(ops::task::get_by_key_prefix(pool, k).await?.id)
+        } else {
+            None
+        };
+        Ok((before_id, after_id))
+    }
+}
 
 #[derive(Subcommand)]
 pub enum TaskCommands {
@@ -27,12 +54,8 @@ pub enum TaskCommands {
         /// Tags to add (comma-separated)
         #[arg(long)]
         tag: Option<String>,
-        /// Place before this task key
-        #[arg(long)]
-        before: Option<String>,
-        /// Place after this task key
-        #[arg(long)]
-        after: Option<String>,
+        #[command(flatten)]
+        position: PositionArgs,
     },
     /// List tasks
     List {
@@ -66,15 +89,11 @@ pub enum TaskCommands {
     Move {
         /// Task key or prefix
         key: String,
-        /// Place before this task key
-        #[arg(long)]
-        before: Option<String>,
-        /// Place after this task key
-        #[arg(long)]
-        after: Option<String>,
         /// Backlog to reorder within
         #[arg(long)]
         backlog: String,
+        #[command(flatten)]
+        position: PositionArgs,
     },
     /// Add a task to a backlog
     Add {
@@ -106,8 +125,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             state,
             parent,
             tag,
-            before,
-            after,
+            position,
         } => {
             let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
             let parent_id = if let Some(parent_key) = &parent {
@@ -115,18 +133,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             } else {
                 None
             };
-
-            let before_id = if let Some(k) = &before {
-                Some(ops::task::get_by_key_prefix(pool, k).await?.id)
-            } else {
-                None
-            };
-            let after_id = if let Some(k) = &after {
-                Some(ops::task::get_by_key_prefix(pool, k).await?.id)
-            } else {
-                None
-            };
-
+            let (before_id, after_id) = position.resolve(pool).await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             let task = ops::task::create(
@@ -232,23 +239,12 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         }
         TaskCommands::Move {
             key,
-            before,
-            after,
             backlog,
+            position,
         } => {
             let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
             let task = ops::task::get_by_key_prefix(pool, &key).await?;
-
-            let before_id = if let Some(k) = &before {
-                Some(ops::task::get_by_key_prefix(pool, k).await?.id)
-            } else {
-                None
-            };
-            let after_id = if let Some(k) = &after {
-                Some(ops::task::get_by_key_prefix(pool, k).await?.id)
-            } else {
-                None
-            };
+            let (before_id, after_id) = position.resolve(pool).await?;
 
             ops::task::move_task(pool, task.id, bl.id, before_id, after_id).await?;
             println!("Moved {} {}", &task.key[..8], task.title);
