@@ -6,6 +6,8 @@ pub enum RangerError {
     AmbiguousPrefix(String),
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
+    #[error("migration error: {0}")]
+    Migrate(#[from] sqlx::migrate::MigrateError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

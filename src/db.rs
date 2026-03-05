@@ -20,18 +20,8 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, RangerError> {
         .connect_with(options)
         .await?;
 
-    migrate(&pool).await?;
+    sqlx::migrate!().run(&pool).await?;
     Ok(pool)
-}
-
-async fn migrate(pool: &SqlitePool) -> Result<(), RangerError> {
-    sqlx::raw_sql(include_str!("../migrations/001_initial.sql"))
-        .execute(pool)
-        .await?;
-    sqlx::raw_sql(include_str!("../migrations/002_unique_backlog_name.sql"))
-        .execute(pool)
-        .await?;
-    Ok(())
 }
 
 #[cfg(test)]
