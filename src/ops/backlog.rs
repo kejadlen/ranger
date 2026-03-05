@@ -1,15 +1,11 @@
 use crate::error::RangerError;
-use crate::key;
 use crate::models::Backlog;
 use sqlx::sqlite::SqliteConnection;
 
 pub async fn create(conn: &mut SqliteConnection, name: &str) -> Result<Backlog, RangerError> {
-    // key column still exists in the schema but is unused; generate a dummy value
-    let key = key::generate_key();
     let backlog = sqlx::query_as::<_, Backlog>(
-        "INSERT INTO backlogs (key, name) VALUES (?, ?) RETURNING id, name, created_at, updated_at",
+        "INSERT INTO backlogs (name) VALUES (?) RETURNING id, name, created_at, updated_at",
     )
-    .bind(&key)
     .bind(name)
     .fetch_one(&mut *conn)
     .await?;
