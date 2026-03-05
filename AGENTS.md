@@ -141,3 +141,24 @@ The integration test (`tests/cli.rs`) exercises the full workflow via the compil
 This project uses **jj** (Jujutsu), not git directly. Use `jj` commands for commits, diffs, and history.
 
 Use jj workspaces (in `work/`) for feature work. See the `jj-workspaces` skill.
+
+### Finishing Workspace Work
+
+When work in a workspace is complete and verified:
+
+```bash
+# 1. Return to main workspace
+cd /Users/alpha/src/ranger
+
+# 2. Sync to see workspace changes
+jj workspace update-stale
+
+# 3. Rebase workspace commits after the last described commit on main's line
+jj rebase -s <first-workspace-commit> -A 'latest(trunk()..default@ ~ description(exact:""))'
+
+# 4. Clean up
+jj workspace forget <name>
+rm -rf work/<name>
+```
+
+The revset `latest(trunk()..default@ ~ description(exact:""))` finds the most recent commit after trunk that has a non-empty description — i.e., the last explicitly committed change on the main line.
