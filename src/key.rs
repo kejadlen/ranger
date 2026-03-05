@@ -9,10 +9,10 @@ const ALPHABET: &[char] = &[
 const KEY_LENGTH: usize = 16;
 
 pub fn generate_key() -> String {
-    let mut rng = rand::rng();
+    let mut rng = rand::thread_rng();
     (0..KEY_LENGTH)
         .map(|_| {
-            let idx = rng.random_range(0..ALPHABET.len());
+            let idx = rng.gen_range(0..ALPHABET.len());
             ALPHABET[idx]
         })
         .collect()
