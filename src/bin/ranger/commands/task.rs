@@ -88,6 +88,8 @@ pub enum TaskCommands {
         /// New state
         #[arg(long)]
         state: Option<String>,
+        #[command(flatten)]
+        position: PositionArgs,
     },
     /// Move a task's position within its backlog
     #[command(visible_alias = "mv")]
@@ -222,11 +224,14 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             title,
             description,
             state,
+            position,
         } => {
             let mut conn = pool.acquire().await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let (before_id, after_id) = position.resolve(&mut conn).await?;
+
             let updated = ops::task::edit(
                 &mut conn,
                 task.id,
@@ -235,6 +240,11 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 state,
             )
             .await?;
+
+            if before_id.is_some() || after_id.is_some() {
+                ops::task::move_task(&mut conn, updated.id, before_id, after_id).await?;
+            }
+
             output::print(&updated, json, print_task);
         }
         TaskCommands::Move { key, position } => {
