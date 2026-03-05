@@ -26,6 +26,12 @@ pub enum TaskCommands {
         /// Tags to add (comma-separated)
         #[arg(long)]
         tag: Option<String>,
+        /// Place before this task key
+        #[arg(long)]
+        before: Option<String>,
+        /// Place after this task key
+        #[arg(long)]
+        after: Option<String>,
     },
     /// List tasks
     List {
@@ -99,10 +105,23 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
             state,
             parent,
             tag,
+            before,
+            after,
         } => {
             let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
             let parent_id = if let Some(parent_key) = &parent {
                 Some(ops::task::get_by_key_prefix(pool, parent_key).await?.id)
+            } else {
+                None
+            };
+
+            let before_id = if let Some(k) = &before {
+                Some(ops::task::get_by_key_prefix(pool, k).await?.id)
+            } else {
+                None
+            };
+            let after_id = if let Some(k) = &after {
+                Some(ops::task::get_by_key_prefix(pool, k).await?.id)
             } else {
                 None
             };
@@ -114,11 +133,15 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
 
             let task = ops::task::create(
                 pool,
-                &title,
-                bl.id,
-                state,
-                parent_id,
-                description.as_deref(),
+                ops::task::CreateTask {
+                    title: &title,
+                    backlog_id: bl.id,
+                    state,
+                    parent_id,
+                    description: description.as_deref(),
+                    before_task_id: before_id,
+                    after_task_id: after_id,
+                },
             )
             .await?;
 

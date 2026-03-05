@@ -41,9 +41,20 @@ mod tests {
     async fn add_and_list_comments() {
         let pool = test_pool().await;
         let bl = backlog::create(&pool, "Test").await.unwrap();
-        let t = task::create(&pool, "Task", bl.id, None, None, None)
-            .await
-            .unwrap();
+        let t = task::create(
+            &pool,
+            task::CreateTask {
+                title: "Task",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+                before_task_id: None,
+                after_task_id: None,
+            },
+        )
+        .await
+        .unwrap();
 
         add(&pool, t.id, "First comment").await.unwrap();
         add(&pool, t.id, "Second comment").await.unwrap();

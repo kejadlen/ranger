@@ -58,12 +58,34 @@ mod tests {
     async fn add_and_list_blockers() {
         let pool = test_pool().await;
         let bl = backlog::create(&pool, "Test").await.unwrap();
-        let t1 = task::create(&pool, "Blocked", bl.id, None, None, None)
-            .await
-            .unwrap();
-        let t2 = task::create(&pool, "Blocker", bl.id, None, None, None)
-            .await
-            .unwrap();
+        let t1 = task::create(
+            &pool,
+            task::CreateTask {
+                title: "Blocked",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+                before_task_id: None,
+                after_task_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = task::create(
+            &pool,
+            task::CreateTask {
+                title: "Blocker",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+                before_task_id: None,
+                after_task_id: None,
+            },
+        )
+        .await
+        .unwrap();
 
         add(&pool, t1.id, t2.id).await.unwrap();
 
@@ -76,12 +98,34 @@ mod tests {
     async fn remove_blocker() {
         let pool = test_pool().await;
         let bl = backlog::create(&pool, "Test").await.unwrap();
-        let t1 = task::create(&pool, "Blocked", bl.id, None, None, None)
-            .await
-            .unwrap();
-        let t2 = task::create(&pool, "Blocker", bl.id, None, None, None)
-            .await
-            .unwrap();
+        let t1 = task::create(
+            &pool,
+            task::CreateTask {
+                title: "Blocked",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+                before_task_id: None,
+                after_task_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = task::create(
+            &pool,
+            task::CreateTask {
+                title: "Blocker",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+                before_task_id: None,
+                after_task_id: None,
+            },
+        )
+        .await
+        .unwrap();
 
         add(&pool, t1.id, t2.id).await.unwrap();
         remove(&pool, t1.id, t2.id).await.unwrap();

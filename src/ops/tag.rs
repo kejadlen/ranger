@@ -82,9 +82,20 @@ mod tests {
     async fn add_tag_to_task_and_list() {
         let pool = test_pool().await;
         let bl = backlog::create(&pool, "Test").await.unwrap();
-        let t = task::create(&pool, "Task", bl.id, None, None, None)
-            .await
-            .unwrap();
+        let t = task::create(
+            &pool,
+            task::CreateTask {
+                title: "Task",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+                before_task_id: None,
+                after_task_id: None,
+            },
+        )
+        .await
+        .unwrap();
         let tag = get_or_create(&pool, "important").await.unwrap();
 
         add_to_task(&pool, t.id, tag.id).await.unwrap();
@@ -98,9 +109,20 @@ mod tests {
     async fn add_tag_to_task_is_idempotent() {
         let pool = test_pool().await;
         let bl = backlog::create(&pool, "Test").await.unwrap();
-        let t = task::create(&pool, "Task", bl.id, None, None, None)
-            .await
-            .unwrap();
+        let t = task::create(
+            &pool,
+            task::CreateTask {
+                title: "Task",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+                before_task_id: None,
+                after_task_id: None,
+            },
+        )
+        .await
+        .unwrap();
         let tag = get_or_create(&pool, "dup").await.unwrap();
 
         add_to_task(&pool, t.id, tag.id).await.unwrap();
