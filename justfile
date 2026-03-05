@@ -20,7 +20,7 @@ coverage:
     export RUSTFLAGS="-Cinstrument-coverage"
     export CARGO_TARGET_DIR="target/coverage"
     export LLVM_PROFILE_FILE="target/coverage/profraw/%p-%m.profraw"
-    rm -rf target/coverage/profraw
+    rm -rf target/coverage
     cargo test --workspace -q
     REPORT=$(grcov target/coverage/profraw \
         --binary-path ./target/coverage/debug/ \
