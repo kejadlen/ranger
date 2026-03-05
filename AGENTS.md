@@ -142,3 +142,5 @@ The integration test (`tests/cli.rs`) exercises the full workflow via the compil
 ## VCS
 
 This project uses **jj** (Jujutsu), not git directly. Use `jj` commands for commits, diffs, and history.
+
+Use jj workspaces (in `work/`) for feature work. See the `jj-workspaces` skill.
