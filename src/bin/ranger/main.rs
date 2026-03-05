@@ -22,16 +22,19 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Manage backlogs
+    #[command(visible_alias = "b")]
     Backlog {
         #[command(subcommand)]
         command: commands::backlog::BacklogCommands,
     },
     /// Manage tasks
+    #[command(visible_alias = "t")]
     Task {
         #[command(subcommand)]
         command: commands::task::TaskCommands,
     },
     /// Manage comments
+    #[command(visible_alias = "c")]
     Comment {
         #[command(subcommand)]
         command: commands::comment::CommentCommands,

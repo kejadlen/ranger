@@ -9,11 +9,13 @@ use crate::output;
 #[derive(Subcommand)]
 pub enum BacklogCommands {
     /// Create a new backlog
+    #[command(visible_alias = "new")]
     Create {
         /// Name for the backlog
         name: String,
     },
     /// List all backlogs
+    #[command(visible_alias = "ls")]
     List,
     /// Show a backlog's details
     Show {

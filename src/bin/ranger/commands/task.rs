@@ -36,6 +36,7 @@ impl PositionArgs {
 #[derive(Subcommand)]
 pub enum TaskCommands {
     /// Create a new task
+    #[command(visible_alias = "new")]
     Create {
         /// Task title
         title: String,
@@ -58,6 +59,7 @@ pub enum TaskCommands {
         position: PositionArgs,
     },
     /// List tasks
+    #[command(visible_alias = "ls")]
     List {
         /// Filter by backlog key or prefix
         #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
@@ -86,6 +88,7 @@ pub enum TaskCommands {
         state: Option<String>,
     },
     /// Move a task's position within a backlog
+    #[command(visible_alias = "mv")]
     Move {
         /// Task key or prefix
         key: String,
@@ -112,6 +115,7 @@ pub enum TaskCommands {
         backlog: String,
     },
     /// Delete a task entirely
+    #[command(visible_alias = "rm")]
     Delete {
         /// Task key or prefix
         key: String,
