@@ -29,6 +29,8 @@ ranger backlog create "Ranger"
 
 ### Workflow
 
+All work must correspond to a task in the backlog. If the user asks for something that isn't tracked, create a task for it first, then pick it up.
+
 Before starting work, check the backlog:
 
 ```bash
