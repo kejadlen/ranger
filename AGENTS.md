@@ -36,8 +36,7 @@ All work must correspond to a task in the backlog. If the user asks for somethin
 Before starting work, check the backlog:
 
 ```bash
-ranger task list --backlog <name> --state queued
-ranger task list --backlog <name> --state in_progress
+ranger backlog show <name>
 ```
 
 When picking up a task:
@@ -74,7 +73,7 @@ ranger task create "Subtask" --backlog <name> --parent <key>   # subtask
 When adding queued tasks, consider where they belong relative to existing work. New tasks land at the bottom by default — reposition them if they're higher priority:
 
 ```bash
-ranger task list --backlog <name> --state queued               # see current order
+ranger backlog show <name>                                     # see current order
 ranger task move <key> --backlog <name> --before <key>         # place before a task
 ranger task move <key> --backlog <name> --after <key>          # place after a task
 ```
