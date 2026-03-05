@@ -1,7 +1,7 @@
 use clap::Subcommand;
 use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
-use ranger::models::Backlog;
+use ranger::models::{Backlog, State};
 use ranger::ops;
 
 use crate::output;
@@ -34,7 +34,34 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
         }
         BacklogCommands::Show { key } => {
             let backlog = ops::backlog::get_by_key_prefix(pool, &key).await?;
-            output::print(&backlog, json, print_backlog_detail);
+
+            if json {
+                let mut state_groups = serde_json::Map::new();
+                for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
+                    let tasks = ops::task::list(pool, backlog.id, Some(state.clone())).await?;
+                    if !tasks.is_empty() {
+                        state_groups
+                            .insert(state.to_string(), serde_json::to_value(&tasks).unwrap());
+                    }
+                }
+                let detail = serde_json::json!({
+                    "backlog": backlog,
+                    "tasks": state_groups,
+                });
+                println!("{}", serde_json::to_string_pretty(&detail).unwrap());
+            } else {
+                print_backlog_detail(&backlog);
+
+                for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
+                    let tasks = ops::task::list(pool, backlog.id, Some(state.clone())).await?;
+                    if !tasks.is_empty() {
+                        println!("\n[{}]", state);
+                        for t in &tasks {
+                            println!("  {} {}", &t.key[..8], t.title);
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())
