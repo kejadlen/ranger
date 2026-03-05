@@ -100,8 +100,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -128,8 +126,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await

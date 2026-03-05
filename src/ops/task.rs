@@ -10,8 +10,6 @@ pub struct CreateTask<'a> {
     pub state: Option<State>,
     pub parent_id: Option<i64>,
     pub description: Option<&'a str>,
-    pub before_task_id: Option<i64>,
-    pub after_task_id: Option<i64>,
 }
 
 pub async fn create(
@@ -34,14 +32,16 @@ pub async fn create(
     .fetch_one(&mut *conn)
     .await?;
 
-    let new_pos = resolve_position(
-        &mut *conn,
-        params.backlog_id,
-        task.id,
-        params.before_task_id,
-        params.after_task_id,
+    let last_pos: Option<String> = sqlx::query_scalar(
+        "SELECT position FROM backlog_tasks \
+         WHERE backlog_id = ? \
+         ORDER BY position DESC LIMIT 1",
     )
+    .bind(params.backlog_id)
+    .fetch_optional(&mut *conn)
     .await?;
+
+    let new_pos = position::midpoint(last_pos.as_deref(), None);
 
     sqlx::query("INSERT INTO backlog_tasks (backlog_id, task_id, position) VALUES (?, ?, ?)")
         .bind(params.backlog_id)
@@ -278,20 +278,12 @@ pub async fn add_to_backlog(
     task_id: i64,
     backlog_id: i64,
 ) -> Result<(), RangerError> {
-    // Get the task's state to find proper position
-    let state: String = sqlx::query_scalar("SELECT state FROM tasks WHERE id = ?")
-        .bind(task_id)
-        .fetch_one(&mut *conn)
-        .await?;
-
     let last_pos: Option<String> = sqlx::query_scalar(
-        "SELECT bt.position FROM backlog_tasks bt \
-         JOIN tasks t ON t.id = bt.task_id \
-         WHERE bt.backlog_id = ? AND t.state = ? \
-         ORDER BY bt.position DESC LIMIT 1",
+        "SELECT position FROM backlog_tasks \
+         WHERE backlog_id = ? \
+         ORDER BY position DESC LIMIT 1",
     )
     .bind(backlog_id)
-    .bind(&state)
     .fetch_optional(&mut *conn)
     .await?;
 
@@ -355,8 +347,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -391,8 +381,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -405,8 +393,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -419,8 +405,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -446,8 +430,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -460,8 +442,6 @@ mod tests {
                 state: Some(State::Queued),
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -489,8 +469,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -513,8 +491,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -549,8 +525,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -578,8 +552,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -606,8 +578,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -620,8 +590,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -634,8 +602,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -665,8 +631,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -679,8 +643,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -693,8 +655,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -724,8 +684,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -738,8 +696,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -752,8 +708,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -783,8 +737,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -797,8 +749,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -811,8 +761,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -842,8 +790,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -856,8 +802,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -870,8 +814,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -901,8 +843,6 @@ mod tests {
                 state: None,
                 parent_id: None,
                 description: None,
-                before_task_id: None,
-                after_task_id: None,
             },
         )
         .await
@@ -916,173 +856,5 @@ mod tests {
         // backlog_tasks should be cleaned up by cascade
         let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn create_task_before() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: None,
-                after_task_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: None,
-                after_task_id: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Create a task before t1 — should produce order: t3, t1, t2
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "Before first",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: Some(t1.id),
-                after_task_id: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t3.id, "t3 should be first");
-        assert_eq!(tasks[1].id, t1.id, "t1 should be second");
-        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
-    }
-
-    #[tokio::test]
-    async fn create_task_after() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: None,
-                after_task_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: None,
-                after_task_id: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Create a task after t1 — should produce order: t1, t3, t2
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "After first",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: None,
-                after_task_id: Some(t1.id),
-            },
-        )
-        .await
-        .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t1.id, "t1 should be first");
-        assert_eq!(tasks[1].id, t3.id, "t3 should be second");
-        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
-    }
-
-    #[tokio::test]
-    async fn create_task_between() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let t1 = create(
-            &mut conn,
-            CreateTask {
-                title: "First",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: None,
-                after_task_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        let t2 = create(
-            &mut conn,
-            CreateTask {
-                title: "Second",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: None,
-                after_task_id: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Create a task after t1 and before t2 — should produce order: t1, t3, t2
-        let t3 = create(
-            &mut conn,
-            CreateTask {
-                title: "Between",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-                before_task_id: Some(t2.id),
-                after_task_id: Some(t1.id),
-            },
-        )
-        .await
-        .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks[0].id, t1.id, "t1 should be first");
-        assert_eq!(tasks[1].id, t3.id, "t3 should be second");
-        assert_eq!(tasks[2].id, t2.id, "t2 should be third");
     }
 }
