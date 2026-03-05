@@ -5,6 +5,7 @@ use tempfile::tempdir;
 fn ranger(db_path: &str) -> Command {
     let mut cmd = Command::from(cargo_bin_cmd!("ranger"));
     cmd.env("RANGER_DB", db_path);
+    cmd.env("RANGER_DEFAULT_BACKLOG", "Ranger");
     cmd
 }
 
@@ -23,48 +24,31 @@ fn full_workflow() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Ranger"));
 
-    // List backlogs (JSON) and extract key
+    // List backlogs (JSON)
     let output = ranger(db_path)
         .args(["backlog", "list", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let backlogs: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let backlog_key = backlogs[0]["key"].as_str().unwrap().to_string();
-    let bl_prefix = &backlog_key[..4];
+    assert_eq!(backlogs[0]["name"], "Ranger");
 
-    // Create tasks
+    // Create tasks (using RANGER_DEFAULT_BACKLOG)
     let output = ranger(db_path)
-        .args([
-            "task",
-            "create",
-            "First task",
-            "--backlog",
-            bl_prefix,
-            "--state",
-            "queued",
-        ])
+        .args(["task", "create", "First task", "--state", "queued"])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     let output = ranger(db_path)
-        .args([
-            "task",
-            "create",
-            "Second task",
-            "--backlog",
-            bl_prefix,
-            "--tag",
-            "urgent",
-        ])
+        .args(["task", "create", "Second task", "--tag", "urgent"])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     // List tasks (JSON) and verify ordering
     let output = ranger(db_path)
-        .args(["task", "list", "--backlog", bl_prefix, "--json"])
+        .args(["task", "list", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -135,7 +119,7 @@ fn full_workflow() {
 
     // Verify deletion
     let output = ranger(db_path)
-        .args(["task", "list", "--backlog", bl_prefix, "--json"])
+        .args(["task", "list", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());

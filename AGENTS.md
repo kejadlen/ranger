@@ -32,8 +32,8 @@ ranger backlog create "Ranger"
 Before starting work, check the backlog:
 
 ```bash
-ranger task list --backlog <key> --state queued
-ranger task list --backlog <key> --state in_progress
+ranger task list --backlog <name> --state queued
+ranger task list --backlog <name> --state in_progress
 ```
 
 When picking up a task:
@@ -60,9 +60,9 @@ ranger comment add <key> "Completed — summary of what was done"
 To add new work:
 
 ```bash
-ranger task create "Title" --backlog <key>                    # icebox by default
-ranger task create "Title" --backlog <key> --state queued     # committed work
-ranger task create "Subtask" --backlog <key> --parent <key>   # subtask
+ranger task create "Title" --backlog <name>                    # icebox by default
+ranger task create "Title" --backlog <name> --state queued     # committed work
+ranger task create "Subtask" --backlog <name> --parent <key>   # subtask
 ```
 
 ### Prioritization
@@ -70,12 +70,12 @@ ranger task create "Subtask" --backlog <key> --parent <key>   # subtask
 When adding queued tasks, consider where they belong relative to existing work. New tasks land at the bottom by default — reposition them if they're higher priority:
 
 ```bash
-ranger task list --backlog <key> --state queued               # see current order
-ranger task move <key> --backlog <key> --before <key>         # place before a task
-ranger task move <key> --backlog <key> --after <key>          # place after a task
+ranger task list --backlog <name> --state queued               # see current order
+ranger task move <key> --backlog <name> --before <key>         # place before a task
+ranger task move <key> --backlog <name> --after <key>          # place after a task
 ```
 
-Top of the queue = most important. Ask the user where a task should go if priority isn't obvious. Don't just append everything to the bottom — a backlog that isn't ordered isn't useful.
+Top of the queue = most important. Only move tasks within the queued state — don't reposition done, in_progress, or icebox tasks. Ask the user where a task should go if priority isn't obvious. Don't just append everything to the bottom — a backlog that isn't ordered isn't useful.
 
 **Bias toward quick wins**: Small, easy tasks should be prioritized higher by default — even if they're just nice-to-haves. A 5-minute fix that improves quality of life is worth doing before a multi-hour feature. When suggesting priority, bump quick wins up rather than defaulting them to the bottom.
 

@@ -129,7 +129,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             tag,
             position,
         } => {
-            let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
+            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
             let parent_id = if let Some(parent_key) = &parent {
                 Some(ops::task::get_by_key_prefix(pool, parent_key).await?.id)
             } else {
@@ -165,7 +165,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             if let Some(backlog_key) = &backlog {
-                let bl = ops::backlog::get_by_key_prefix(pool, backlog_key).await?;
+                let bl = ops::backlog::get_by_name(pool, backlog_key).await?;
                 let tasks = ops::task::list(pool, bl.id, state).await?;
                 output::print_list(&tasks, json, print_task);
             } else {
@@ -244,7 +244,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             backlog,
             position,
         } => {
-            let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
+            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
             let task = ops::task::get_by_key_prefix(pool, &key).await?;
             let (before_id, after_id) = position.resolve(pool).await?;
 
@@ -253,13 +253,13 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         }
         TaskCommands::Add { task, backlog } => {
             let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
+            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
             ops::task::add_to_backlog(pool, t.id, bl.id).await?;
             println!("Added {} to {}", &t.key[..8], bl.name);
         }
         TaskCommands::Remove { task, backlog } => {
             let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let bl = ops::backlog::get_by_key_prefix(pool, &backlog).await?;
+            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
             ops::task::remove_from_backlog(pool, t.id, bl.id).await?;
             println!("Removed {} from {}", &t.key[..8], bl.name);
         }

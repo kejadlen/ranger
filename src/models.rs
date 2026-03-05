@@ -72,7 +72,6 @@ impl sqlx::Encode<'_, sqlx::Sqlite> for State {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Backlog {
     pub id: i64,
-    pub key: String,
     pub name: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,

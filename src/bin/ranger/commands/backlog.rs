@@ -17,8 +17,8 @@ pub enum BacklogCommands {
     List,
     /// Show a backlog's details
     Show {
-        /// Key or key prefix of the backlog
-        key: String,
+        /// Backlog name
+        name: String,
     },
 }
 
@@ -32,8 +32,8 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
             let backlogs = ops::backlog::list(pool).await?;
             output::print_list(&backlogs, json, print_backlog);
         }
-        BacklogCommands::Show { key } => {
-            let backlog = ops::backlog::get_by_key_prefix(pool, &key).await?;
+        BacklogCommands::Show { name } => {
+            let backlog = ops::backlog::get_by_name(pool, &name).await?;
 
             if json {
                 let mut state_groups = serde_json::Map::new();
@@ -68,11 +68,10 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
 }
 
 fn print_backlog(b: &Backlog) {
-    println!("{} {}", &b.key[..8], b.name);
+    println!("{}", b.name);
 }
 
 fn print_backlog_detail(b: &Backlog) {
-    println!("Key:     {}", b.key);
     println!("Name:    {}", b.name);
     println!("Created: {}", b.created_at);
     println!("Updated: {}", b.updated_at);
