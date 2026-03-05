@@ -236,7 +236,7 @@ llvm-cov show -object bin1 -object bin2 --instr-profile=merged.profdata
 
 **Dead code appears uncovered**: Unreachable code still gets instrumented. If coverage matters, delete dead code rather than excluding it.
 
-**Stale incremental artifacts with grcov**: Incremental compilation reuses old object files with outdated debug info, causing grcov to report phantom uncovered lines. Set `CARGO_INCREMENTAL=0` for coverage builds, or run `cargo clean` before measuring.
+**Stale incremental artifacts with grcov**: Incremental compilation reuses old object files with outdated debug info, causing grcov to report phantom uncovered lines. Use a separate `CARGO_TARGET_DIR` for coverage builds so instrumented and non-instrumented artifacts never mix.
 
 **Proc macros and build scripts**: Not instrumented by default. Use `--include-build-script` if needed. When using `--no-rustc-wrapper` with `--target`, proc macros won't show coverage.
 
@@ -246,11 +246,13 @@ llvm-cov show -object bin1 -object bin2 --instr-profile=merged.profdata
 
 ## This Project
 
-This project uses `just coverage` which runs grcov with covdir output:
+This project uses `just coverage` which builds into an isolated `target/coverage/` directory and runs grcov with covdir output:
 
 ```bash
-RUSTFLAGS="-Cinstrument-coverage" cargo test --workspace
-grcov target/coverage --binary-path ./target/debug/ -s . -t covdir \
+RUSTFLAGS="-Cinstrument-coverage" CARGO_TARGET_DIR=target/coverage \
+    cargo test --workspace
+grcov target/coverage/profraw \
+    --binary-path ./target/coverage/debug/ -s . -t covdir \
     --keep-only 'src/**' --ignore 'src/bin/**' \
     --excl-line 'cov-excl-line' --excl-start 'cov-excl-start' --excl-stop 'cov-excl-stop'
 ```
@@ -260,7 +262,8 @@ grcov target/coverage --binary-path ./target/debug/ -s . -t covdir \
 To find uncovered lines, use the markdown output:
 
 ```bash
-grcov target/coverage --binary-path ./target/debug/ -s . -t markdown \
+grcov target/coverage/profraw \
+    --binary-path ./target/coverage/debug/ -s . -t markdown \
     --keep-only 'src/**' --ignore 'src/bin/**' \
     --excl-line 'cov-excl-line' --excl-start 'cov-excl-start' --excl-stop 'cov-excl-stop'
 ```
