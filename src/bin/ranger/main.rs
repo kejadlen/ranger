@@ -58,7 +58,12 @@ fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db);
     let pool = ranger::db::connect(&db_path).await?;

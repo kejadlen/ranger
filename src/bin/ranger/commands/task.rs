@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::models::{State, Task};
 use ranger::ops;
@@ -96,7 +97,7 @@ pub enum TaskCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow::Result<()> {
+pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result<()> {
     match command {
         TaskCommands::Create {
             title,
@@ -126,10 +127,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
                 None
             };
 
-            let state = state
-                .map(|s| s.parse::<State>())
-                .transpose()
-                .map_err(|e| anyhow::anyhow!(e))?;
+            let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             let task = ops::task::create(
                 pool,
@@ -155,10 +153,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
             output::print(&task, json, print_task);
         }
         TaskCommands::List { backlog, state } => {
-            let state = state
-                .map(|s| s.parse::<State>())
-                .transpose()
-                .map_err(|e| anyhow::anyhow!(e))?;
+            let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             if let Some(backlog_key) = &backlog {
                 let bl = ops::backlog::get_by_key_prefix(pool, backlog_key).await?;
@@ -222,10 +217,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> anyhow
             description,
             state,
         } => {
-            let state = state
-                .map(|s| s.parse::<State>())
-                .transpose()
-                .map_err(|e| anyhow::anyhow!(e))?;
+            let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             let task = ops::task::get_by_key_prefix(pool, &key).await?;
             let updated = ops::task::edit(

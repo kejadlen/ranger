@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::ops;
 
@@ -10,7 +11,7 @@ pub enum TagCommands {
     List,
 }
 
-pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> anyhow::Result<()> {
+pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<()> {
     match command {
         TagCommands::List => {
             let tags = ops::tag::list(pool).await?;

@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::ops;
 
@@ -22,7 +23,7 @@ pub enum BlockerCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, command: BlockerCommands, json: bool) -> anyhow::Result<()> {
+pub async fn run(pool: &SqlitePool, command: BlockerCommands, json: bool) -> Result<()> {
     match command {
         BlockerCommands::Add { task, blocked_by } => {
             let t = ops::task::get_by_key_prefix(pool, &task).await?;

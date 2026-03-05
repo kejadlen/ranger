@@ -23,15 +23,19 @@ impl State {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("invalid state: '{0}'")]
+pub struct InvalidStateError(String);
+
 impl std::str::FromStr for State {
-    type Err = String;
+    type Err = InvalidStateError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "icebox" => Ok(State::Icebox),
             "queued" => Ok(State::Queued),
             "in_progress" => Ok(State::InProgress),
             "done" => Ok(State::Done),
-            _ => Err(format!("invalid state: {s}")),
+            _ => Err(InvalidStateError(s.to_string())),
         }
     }
 }

@@ -8,7 +8,8 @@ name = "ranger"
 path = "src/bin/ranger/main.rs"
 
 [dependencies]
-anyhow = "*"
+color-eyre = "*"
+tracing-subscriber = { version = "*", features = ["env-filter"] }
 jiff = { version = "*", features = ["serde"] }
 clap = { version = "*", features = ["derive", "env"] }
 rand = "*"

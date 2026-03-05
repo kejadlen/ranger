@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::models::Backlog;
 use ranger::ops;
@@ -21,7 +22,7 @@ pub enum BacklogCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> anyhow::Result<()> {
+pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Result<()> {
     match command {
         BacklogCommands::Create { name } => {
             let backlog = ops::backlog::create(pool, &name).await?;

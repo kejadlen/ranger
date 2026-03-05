@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::ops;
 
@@ -20,7 +21,7 @@ pub enum CommentCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, command: CommentCommands, json: bool) -> anyhow::Result<()> {
+pub async fn run(pool: &SqlitePool, command: CommentCommands, json: bool) -> Result<()> {
     match command {
         CommentCommands::Add { task, body } => {
             let t = ops::task::get_by_key_prefix(pool, &task).await?;
