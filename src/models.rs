@@ -55,8 +55,7 @@ impl sqlx::Type<sqlx::Sqlite> for State {
 impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for State {
     fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let s = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
-        s.parse::<State>()
-            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)).into())
+        Ok(s.parse::<State>()?)
     }
 }
 
