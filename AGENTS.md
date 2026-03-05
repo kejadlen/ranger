@@ -140,7 +140,7 @@ The integration test (`tests/cli.rs`) exercises the full workflow via the compil
 
 This project uses **jj** (Jujutsu), not git directly. Use `jj` commands for commits, diffs, and history.
 
-Use jj workspaces (in `work/`) for feature work. See the `jj-workspaces` skill.
+**Prefer jj workspaces** (in `work/`) for feature work. See the `jj-workspaces` skill. Repo-wide changes like AGENTS.md updates should be made in the main workspace, not in feature workspaces.
 
 ### Finishing Workspace Work
 
