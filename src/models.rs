@@ -108,3 +108,46 @@ pub struct Blocker {
     pub task_id: i64,
     pub blocked_by_task_id: i64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_roundtrips_through_display_and_parse() {
+        for (state, expected) in [
+            (State::Icebox, "icebox"),
+            (State::Queued, "queued"),
+            (State::InProgress, "in_progress"),
+            (State::Done, "done"),
+        ] {
+            assert_eq!(state.as_str(), expected);
+            assert_eq!(state.to_string(), expected);
+            let parsed: State = expected.parse().unwrap();
+            assert_eq!(parsed.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn state_parse_invalid_returns_error() {
+        let err = "bogus".parse::<State>().unwrap_err();
+        assert_eq!(err.to_string(), "invalid state: 'bogus'");
+    }
+
+    #[tokio::test]
+    async fn state_sqlx_encode_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::connect(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+
+        let state = State::Done;
+        let row: (String,) = sqlx::query_as("SELECT ?")
+            .bind(&state)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(row.0, "done");
+    }
+}

@@ -857,4 +857,113 @@ mod tests {
         let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks.len(), 0);
     }
+
+    #[tokio::test]
+    async fn get_by_id_returns_task() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let task = create(
+            &mut conn,
+            CreateTask {
+                title: "Find by id",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let found = get_by_id(&mut conn, task.id).await.unwrap();
+        assert_eq!(found.title, "Find by id");
+    }
+
+    #[tokio::test]
+    async fn get_by_key_prefix_ambiguous() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // Insert two tasks with keys that share a prefix, bypassing
+        // the random key generator
+        sqlx::query("INSERT INTO tasks (key, title, state) VALUES ('kkkkaaaa', 'First', 'icebox')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (key, title, state) VALUES ('kkkkbbbb', 'Second', 'icebox')",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let result = get_by_key_prefix(&mut conn, "kkkk").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn edit_title_only() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let task = create(
+            &mut conn,
+            CreateTask {
+                title: "Original",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let updated = edit(&mut conn, task.id, Some("New title"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(updated.title, "New title");
+        assert_eq!(updated.state, State::Icebox);
+    }
+
+    #[tokio::test]
+    async fn move_task_to_end() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "First",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Second",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Move first task to end (no before/after)
+        move_task(&mut conn, t1.id, bl.id, None, None)
+            .await
+            .unwrap();
+
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        assert_eq!(tasks[0].id, t2.id);
+        assert_eq!(tasks[1].id, t1.id);
+    }
 }

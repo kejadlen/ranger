@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: rustup component add clippy rustfmt
+      - run: rustup component add clippy rustfmt llvm-tools
+      - run: cargo install grcov
+      - run: cargo install just
       - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: cargo test
+      - run: just clippy coverage

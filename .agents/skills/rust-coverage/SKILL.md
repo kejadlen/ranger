@@ -244,10 +244,23 @@ llvm-cov show -object bin1 -object bin2 --instr-profile=merged.profdata
 
 ## This Project
 
-This project uses `just coverage` which runs:
+This project uses `just coverage` which runs grcov with covdir output:
 
 ```bash
-cargo llvm-cov --workspace --fail-under-lines 100
+RUSTFLAGS="-Cinstrument-coverage" cargo test --workspace
+grcov target/coverage --binary-path ./target/debug/ -s . -t covdir \
+    --keep-only 'src/**' --ignore 'src/bin/**' \
+    --excl-line 'cov-excl-line' --excl-start 'cov-excl-start' --excl-stop 'cov-excl-stop'
 ```
 
-100% line coverage is enforced. When adding code, make sure every line is exercised by tests. Use `cargo llvm-cov --text` or `cargo llvm-cov --html --open` to find uncovered lines.
+100% line coverage is enforced for library code (`src/`, excluding `src/bin/`). When adding code, make sure every line is exercised by tests.
+
+To find uncovered lines, use the markdown output:
+
+```bash
+grcov target/coverage --binary-path ./target/debug/ -s . -t markdown \
+    --keep-only 'src/**' --ignore 'src/bin/**' \
+    --excl-line 'cov-excl-line' --excl-start 'cov-excl-start' --excl-stop 'cov-excl-stop'
+```
+
+Use `// cov-excl-line` for structurally unreachable code (e.g., `unreachable!()` after exhaustive loops). Use `// cov-excl-start` / `// cov-excl-stop` for blocks. Avoid custom format strings in test `assert!` macros — they create phantom uncovered lines.

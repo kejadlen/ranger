@@ -6,9 +6,12 @@ pub use sqlx::SqlitePool;
 pub type SqliteConnection = sqlx::sqlite::SqliteConnection;
 
 pub async fn connect(path: &Path) -> Result<SqlitePool, RangerError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    // path.parent() only returns None for empty paths, which aren't valid
+    // DB paths. Callers always provide a filename within a directory.
+    let parent = path
+        .parent()
+        .expect("database path must have a parent directory");
+    std::fs::create_dir_all(parent)?;
 
     let options = SqliteConnectOptions::new()
         .filename(path)

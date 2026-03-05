@@ -38,6 +38,12 @@ impl sqlx::Encode<'_, sqlx::Sqlite> for Timestamp {
     }
 }
 
+// Timestamp is used as a field in model structs that derive FromRow,
+// which requires both Decode and Encode. Decode is exercised by every
+// query that returns a model. Encode is exercised when a Timestamp is
+// bound as a query parameter — currently only in tests, since production
+// code lets SQLite generate timestamps via strftime.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +60,22 @@ mod tests {
         let json = serde_json::to_string(&ts).unwrap();
         let deserialized: Timestamp = serde_json::from_str(&json).unwrap();
         assert_eq!(ts, deserialized);
+    }
+
+    #[tokio::test]
+    async fn sqlx_encode_roundtrips_through_sqlite() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::connect(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+
+        let ts = Timestamp(jiff::Timestamp::from_second(1_700_000_000).unwrap());
+        let row: (String,) = sqlx::query_as("SELECT ?")
+            .bind(&ts)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(row.0, "2023-11-14T22:13:20Z");
     }
 }
