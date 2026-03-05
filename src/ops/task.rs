@@ -4,6 +4,9 @@ use crate::models::{State, Task};
 use crate::position;
 use sqlx::sqlite::SqliteConnection;
 
+const TASK_COLUMNS: &str =
+    "id, key, backlog_id, parent_id, title, description, state, position, created_at, updated_at";
+
 pub struct CreateTask<'a> {
     pub title: &'a str,
     pub backlog_id: i64,
@@ -19,21 +22,8 @@ pub async fn create(
     let key = key::generate_key();
     let state = params.state.unwrap_or(State::Icebox);
 
-    let task = sqlx::query_as::<_, Task>(
-        "INSERT INTO tasks (key, parent_id, title, description, state) \
-         VALUES (?, ?, ?, ?, ?) \
-         RETURNING id, key, parent_id, title, description, state, created_at, updated_at",
-    )
-    .bind(&key)
-    .bind(params.parent_id)
-    .bind(params.title)
-    .bind(params.description)
-    .bind(state.as_str())
-    .fetch_one(&mut *conn)
-    .await?;
-
     let last_pos: Option<String> = sqlx::query_scalar(
-        "SELECT position FROM backlog_tasks \
+        "SELECT position FROM tasks \
          WHERE backlog_id = ? \
          ORDER BY position DESC LIMIT 1",
     )
@@ -43,11 +33,21 @@ pub async fn create(
 
     let new_pos = position::between(last_pos.as_deref().unwrap_or(""), "");
 
-    sqlx::query("INSERT INTO backlog_tasks (backlog_id, task_id, position) VALUES (?, ?, ?)")
+    let query = format!(
+        "INSERT INTO tasks (key, backlog_id, parent_id, title, description, state, position) \
+         VALUES (?, ?, ?, ?, ?, ?, ?) \
+         RETURNING {TASK_COLUMNS}"
+    );
+
+    let task = sqlx::query_as::<_, Task>(&query)
+        .bind(&key)
         .bind(params.backlog_id)
-        .bind(task.id)
+        .bind(params.parent_id)
+        .bind(params.title)
+        .bind(params.description)
+        .bind(state.as_str())
         .bind(&new_pos)
-        .execute(&mut *conn)
+        .fetch_one(&mut *conn)
         .await?;
 
     Ok(task)
@@ -59,42 +59,36 @@ pub async fn list(
     state_filter: Option<State>,
 ) -> Result<Vec<Task>, RangerError> {
     let tasks = if let Some(state) = state_filter {
-        sqlx::query_as::<_, Task>(
-            "SELECT t.id, t.key, t.parent_id, t.title, t.description, t.state, \
-             t.created_at, t.updated_at \
-             FROM tasks t \
-             JOIN backlog_tasks bt ON bt.task_id = t.id \
-             WHERE bt.backlog_id = ? AND t.state = ? \
-             ORDER BY bt.position",
-        )
-        .bind(backlog_id)
-        .bind(state.as_str())
-        .fetch_all(&mut *conn)
-        .await?
+        let query = format!(
+            "SELECT {TASK_COLUMNS} FROM tasks \
+             WHERE backlog_id = ? AND state = ? \
+             ORDER BY position"
+        );
+        sqlx::query_as::<_, Task>(&query)
+            .bind(backlog_id)
+            .bind(state.as_str())
+            .fetch_all(&mut *conn)
+            .await?
     } else {
-        sqlx::query_as::<_, Task>(
-            "SELECT t.id, t.key, t.parent_id, t.title, t.description, t.state, \
-             t.created_at, t.updated_at \
-             FROM tasks t \
-             JOIN backlog_tasks bt ON bt.task_id = t.id \
-             WHERE bt.backlog_id = ? \
-             ORDER BY bt.position",
-        )
-        .bind(backlog_id)
-        .fetch_all(&mut *conn)
-        .await?
+        let query = format!(
+            "SELECT {TASK_COLUMNS} FROM tasks \
+             WHERE backlog_id = ? \
+             ORDER BY position"
+        );
+        sqlx::query_as::<_, Task>(&query)
+            .bind(backlog_id)
+            .fetch_all(&mut *conn)
+            .await?
     };
     Ok(tasks)
 }
 
 pub async fn get_by_id(conn: &mut SqliteConnection, id: i64) -> Result<Task, RangerError> {
-    let task = sqlx::query_as::<_, Task>(
-        "SELECT id, key, parent_id, title, description, state, created_at, updated_at \
-         FROM tasks WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(&mut *conn)
-    .await?;
+    let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?");
+    let task = sqlx::query_as::<_, Task>(&query)
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(task)
 }
 
@@ -103,13 +97,11 @@ pub async fn get_by_key_prefix(
     prefix: &str,
 ) -> Result<Task, RangerError> {
     let pattern = format!("{prefix}%");
-    let matches = sqlx::query_as::<_, Task>(
-        "SELECT id, key, parent_id, title, description, state, created_at, updated_at \
-         FROM tasks WHERE key LIKE ?",
-    )
-    .bind(&pattern)
-    .fetch_all(&mut *conn)
-    .await?;
+    let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE key LIKE ?");
+    let matches = sqlx::query_as::<_, Task>(&query)
+        .bind(&pattern)
+        .fetch_all(&mut *conn)
+        .await?;
 
     match matches.len() {
         0 => Err(RangerError::KeyNotFound(prefix.to_string())),
@@ -147,67 +139,62 @@ pub async fn edit(
             .await?;
     }
 
-    let task = sqlx::query_as::<_, Task>(
-        "SELECT id, key, parent_id, title, description, state, created_at, updated_at \
-         FROM tasks WHERE id = ?",
-    )
-    .bind(task_id)
-    .fetch_one(&mut *conn)
-    .await?;
+    let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?");
+    let task = sqlx::query_as::<_, Task>(&query)
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(task)
 }
 
 pub async fn move_task(
     conn: &mut SqliteConnection,
     task_id: i64,
-    backlog_id: i64,
     before_task_id: Option<i64>,
     after_task_id: Option<i64>,
 ) -> Result<(), RangerError> {
-    // "before" task = the task we want to appear after us (upper bound)
-    // "after" task = the task we want to appear before us (lower bound)
+    // Look up the task's backlog_id so position queries are scoped correctly
+    let backlog_id: i64 = sqlx::query_scalar("SELECT backlog_id FROM tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?;
+
     let upper: Option<String> = if let Some(id) = before_task_id {
-        sqlx::query_scalar(
-            "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
-        )
-        .bind(backlog_id)
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?
+        sqlx::query_scalar("SELECT position FROM tasks WHERE id = ? AND backlog_id = ?")
+            .bind(id)
+            .bind(backlog_id)
+            .fetch_optional(&mut *conn)
+            .await?
     } else {
         None
     };
 
     let lower: Option<String> = if let Some(id) = after_task_id {
-        sqlx::query_scalar(
-            "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
-        )
-        .bind(backlog_id)
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?
+        sqlx::query_scalar("SELECT position FROM tasks WHERE id = ? AND backlog_id = ?")
+            .bind(id)
+            .bind(backlog_id)
+            .fetch_optional(&mut *conn)
+            .await?
     } else {
         None
     };
 
     let new_pos = match (lower.as_deref(), upper.as_deref()) {
-        // No bounds: append to end of backlog
         (None, None) => {
             let last_pos: Option<String> = sqlx::query_scalar(
-                "SELECT bt.position FROM backlog_tasks bt \
-                 WHERE bt.backlog_id = ? \
-                 ORDER BY bt.position DESC LIMIT 1",
+                "SELECT position FROM tasks \
+                 WHERE backlog_id = ? \
+                 ORDER BY position DESC LIMIT 1",
             )
             .bind(backlog_id)
             .fetch_optional(&mut *conn)
             .await?;
             position::between(last_pos.as_deref().unwrap_or(""), "")
         }
-        // After only: find the next task as upper bound
         (Some(low), None) => {
             let next: Option<String> = sqlx::query_scalar(
-                "SELECT position FROM backlog_tasks \
-                 WHERE backlog_id = ? AND task_id != ? AND position > ? \
+                "SELECT position FROM tasks \
+                 WHERE backlog_id = ? AND id != ? AND position > ? \
                  ORDER BY position ASC LIMIT 1",
             )
             .bind(backlog_id)
@@ -217,11 +204,10 @@ pub async fn move_task(
             .await?;
             position::between(low, next.as_deref().unwrap_or(""))
         }
-        // Before only: find the previous task as lower bound
         (None, Some(up)) => {
             let prev: Option<String> = sqlx::query_scalar(
-                "SELECT position FROM backlog_tasks \
-                 WHERE backlog_id = ? AND task_id != ? AND position < ? \
+                "SELECT position FROM tasks \
+                 WHERE backlog_id = ? AND id != ? AND position < ? \
                  ORDER BY position DESC LIMIT 1",
             )
             .bind(backlog_id)
@@ -231,56 +217,15 @@ pub async fn move_task(
             .await?;
             position::between(prev.as_deref().unwrap_or(""), up)
         }
-        // Both bounds given
         (Some(low), Some(up)) => position::between(low, up),
     };
 
-    sqlx::query("UPDATE backlog_tasks SET position = ? WHERE backlog_id = ? AND task_id = ?")
+    sqlx::query("UPDATE tasks SET position = ? WHERE id = ?")
         .bind(&new_pos)
-        .bind(backlog_id)
         .bind(task_id)
         .execute(&mut *conn)
         .await?;
 
-    Ok(())
-}
-
-pub async fn add_to_backlog(
-    conn: &mut SqliteConnection,
-    task_id: i64,
-    backlog_id: i64,
-) -> Result<(), RangerError> {
-    let last_pos: Option<String> = sqlx::query_scalar(
-        "SELECT position FROM backlog_tasks \
-         WHERE backlog_id = ? \
-         ORDER BY position DESC LIMIT 1",
-    )
-    .bind(backlog_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-
-    let new_pos = position::between(last_pos.as_deref().unwrap_or(""), "");
-
-    sqlx::query("INSERT INTO backlog_tasks (backlog_id, task_id, position) VALUES (?, ?, ?)")
-        .bind(backlog_id)
-        .bind(task_id)
-        .bind(&new_pos)
-        .execute(&mut *conn)
-        .await?;
-
-    Ok(())
-}
-
-pub async fn remove_from_backlog(
-    conn: &mut SqliteConnection,
-    task_id: i64,
-    backlog_id: i64,
-) -> Result<(), RangerError> {
-    sqlx::query("DELETE FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?")
-        .bind(backlog_id)
-        .bind(task_id)
-        .execute(&mut *conn)
-        .await?;
     Ok(())
 }
 
@@ -326,18 +271,9 @@ mod tests {
 
         assert_eq!(task.title, "My Task");
         assert_eq!(task.state, State::Icebox);
+        assert_eq!(task.backlog_id, bl.id);
         assert!(!task.key.is_empty());
-
-        // Verify backlog_tasks join row exists
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
-        )
-        .bind(bl.id)
-        .bind(task.id)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-        assert_eq!(count, 1);
+        assert!(!task.position.is_empty());
     }
 
     #[tokio::test]
@@ -484,60 +420,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_task_to_second_backlog() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl1 = backlog::create(&mut conn, "First").await.unwrap();
-        let bl2 = backlog::create(&mut conn, "Second").await.unwrap();
-        let task = create(
-            &mut conn,
-            CreateTask {
-                title: "Shared",
-                backlog_id: bl1.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        add_to_backlog(&mut conn, task.id, bl2.id).await.unwrap();
-
-        let tasks1 = list(&mut conn, bl1.id, None).await.unwrap();
-        let tasks2 = list(&mut conn, bl2.id, None).await.unwrap();
-        assert_eq!(tasks1.len(), 1);
-        assert_eq!(tasks2.len(), 1);
-        assert_eq!(tasks1[0].id, tasks2[0].id);
-    }
-
-    #[tokio::test]
-    async fn remove_task_from_backlog() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let task = create(
-            &mut conn,
-            CreateTask {
-                title: "Remove me",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        remove_from_backlog(&mut conn, task.id, bl.id)
-            .await
-            .unwrap();
-
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
-        assert_eq!(tasks.len(), 0);
-    }
-
-    #[tokio::test]
     async fn move_task_before() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
@@ -580,7 +462,7 @@ mod tests {
         .unwrap();
 
         // Move t3 before t1 — should produce order: t3, t1, t2
-        move_task(&mut conn, t3.id, bl.id, Some(t1.id), None)
+        move_task(&mut conn, t3.id, Some(t1.id), None)
             .await
             .unwrap();
 
@@ -633,7 +515,7 @@ mod tests {
         .unwrap();
 
         // Move t1 after t3 — should produce order: t2, t3, t1
-        move_task(&mut conn, t1.id, bl.id, None, Some(t3.id))
+        move_task(&mut conn, t1.id, None, Some(t3.id))
             .await
             .unwrap();
 
@@ -686,7 +568,7 @@ mod tests {
         .unwrap();
 
         // Move t3 after t1 (but before t2) — should produce order: t1, t3, t2
-        move_task(&mut conn, t3.id, bl.id, None, Some(t1.id))
+        move_task(&mut conn, t3.id, None, Some(t1.id))
             .await
             .unwrap();
 
@@ -739,7 +621,7 @@ mod tests {
         .unwrap();
 
         // Move t1 before t3 (but after t2) — should produce order: t2, t1, t3
-        move_task(&mut conn, t1.id, bl.id, Some(t3.id), None)
+        move_task(&mut conn, t1.id, Some(t3.id), None)
             .await
             .unwrap();
 
@@ -792,7 +674,7 @@ mod tests {
         .unwrap();
 
         // Move t3 after t1 and before t2 — should produce order: t1, t3, t2
-        move_task(&mut conn, t3.id, bl.id, Some(t2.id), Some(t1.id))
+        move_task(&mut conn, t3.id, Some(t2.id), Some(t1.id))
             .await
             .unwrap();
 
@@ -825,7 +707,6 @@ mod tests {
         let result = get_by_key_prefix(&mut conn, &task.key).await;
         assert!(result.is_err());
 
-        // backlog_tasks should be cleaned up by cascade
         let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks.len(), 0);
     }
@@ -856,19 +737,20 @@ mod tests {
     async fn get_by_key_prefix_ambiguous() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         // Insert two tasks with keys that share a prefix, bypassing
         // the random key generator
-        sqlx::query("INSERT INTO tasks (key, title, state) VALUES ('kkkkaaaa', 'First', 'icebox')")
+        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES ('kkkkaaaa', ?, 'First', 'icebox', 'a')")
+            .bind(bl.id)
             .execute(&mut *conn)
             .await
             .unwrap();
-        sqlx::query(
-            "INSERT INTO tasks (key, title, state) VALUES ('kkkkbbbb', 'Second', 'icebox')",
-        )
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES ('kkkkbbbb', ?, 'Second', 'icebox', 'b')")
+            .bind(bl.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
 
         let result = get_by_key_prefix(&mut conn, "kkkk").await;
         assert!(result.is_err());
@@ -930,9 +812,7 @@ mod tests {
         .unwrap();
 
         // Move first task to end (no before/after)
-        move_task(&mut conn, t1.id, bl.id, None, None)
-            .await
-            .unwrap();
+        move_task(&mut conn, t1.id, None, None).await.unwrap();
 
         let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t2.id);

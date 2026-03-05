@@ -72,8 +72,8 @@ When adding queued tasks, consider where they belong relative to existing work. 
 
 ```bash
 ranger backlog show <name>                                     # see current order
-ranger task move <key> --backlog <name> --before <key>         # place before a task
-ranger task move <key> --backlog <name> --after <key>          # place after a task
+ranger task move <key> --before <key>                          # place before a task
+ranger task move <key> --after <key>                           # place after a task
 ```
 
 Top of the queue = most important. Only move tasks within the queued state — don't reposition done, in_progress, or icebox tasks. Ask the user where a task should go if priority isn't obvious. Don't just append everything to the bottom — a backlog that isn't ordered isn't useful.
@@ -118,7 +118,7 @@ tests/
 - **Keys**: jj-style random strings (16 chars, `k-z` alphabet). Reference by shortest unique prefix.
 - **Positioning**: Lexicographic string-based ordering within backlogs. Insert between two positions without renumbering.
 - **Single crate**: Library (`src/lib.rs`) and binary (`src/bin/ranger/`) in one crate. No workspace.
-- **Tasks in multiple backlogs**: A task can belong to multiple backlogs via `backlog_tasks` join table, with independent positions.
+- **Single backlog per task**: Each task belongs to exactly one backlog. `backlog_id` and `position` live directly on the `tasks` table.
 - **Subtasks are tasks**: `parent_id` on tasks — subtasks get full task capabilities.
 - **No compile-time checked queries**: Using `sqlx::query_as` with runtime binding, not `query_as!` macros. No need for `DATABASE_URL` at build time.
 
