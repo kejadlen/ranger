@@ -39,11 +39,15 @@ Before starting work, check the backlog:
 ranger backlog show <name>
 ```
 
+When the user says "let's keep working" or similar without specifying a task, pick up the next queued task (top of the queue).
+
 When picking up a task:
 
 ```bash
 ranger task edit <key> --state in_progress
 ```
+
+**Use a jj workspace** (see `jj-workspaces` skill) for all feature work unless the change is exceedingly simple (e.g., a one-line config tweak or AGENTS.md update). Name workspaces `<key-prefix>-<short-descriptor>` (e.g., `voxv-position-args`).
 
 While working, add comments only for decisions, blockers, or scope changes that the commit message won't capture:
 
