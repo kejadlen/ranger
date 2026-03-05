@@ -22,10 +22,12 @@ Use the `ranger` CLI to manage tasks for this project. The database lives at the
 ### Setup (first time only)
 
 ```bash
-ranger backlog create "Ranger"
+ranger backlog create "ranger"
 ```
 
 > **Note:** Always use the installed `ranger` binary for PM tasks, not `cargo run`. The repo may be in a non-compiling state during development. Install with `cargo install --path . --locked`.
+
+Set `RANGER_DEFAULT_BACKLOG=ranger` to skip `--backlog` on every command.
 
 ### Workflow
 
@@ -134,6 +136,7 @@ The integration test (`tests/cli.rs`) exercises the full workflow via the compil
 - `sqlx::raw_sql` is used for migrations (multiple statements in one file). `sqlx::query` only runs one statement.
 - SQLite foreign keys must be enabled per-connection (`foreign_keys(true)` on connect options).
 - The `xdg` crate resolves `$XDG_DATA_HOME/ranger/ranger.db`. Override with `RANGER_DB` env var or `--db` flag.
+- Backlogs are identified by name, not key. `RANGER_DEFAULT_BACKLOG` sets the default for `--backlog` flags.
 - Migration uses `CREATE TABLE IF NOT EXISTS` so it's idempotent (safe to run on every connect).
 
 ## VCS
