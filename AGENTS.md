@@ -43,10 +43,9 @@ When picking up a task:
 
 ```bash
 ranger task edit <key> --state in_progress
-ranger comment add <key> "Starting work on this"
 ```
 
-While working, add comments to track progress and decisions:
+While working, add comments only for decisions, blockers, or scope changes that the commit message won't capture:
 
 ```bash
 ranger comment add <key> "Decided to use X because Y"
@@ -57,7 +56,6 @@ When done, commit first, then mark the task:
 ```bash
 jj commit -m "description of the change"
 ranger task edit <key> --state done
-ranger comment add <key> "Completed — summary of what was done"
 ```
 
 To add new work:
@@ -86,7 +84,7 @@ Use `--json` on any command when you need structured output.
 
 ### Working in the Open
 
-Always use the `working-in-the-open` skill when working on ranger tasks. Use `ranger comment add` to post updates instead of GitHub issue comments.
+Use the `working-in-the-open` skill when working on ranger tasks. Use `ranger comment add` instead of GitHub issue comments — but only when there's context the commit message doesn't capture. Most work needs no comment.
 
 ### Conventions
 
