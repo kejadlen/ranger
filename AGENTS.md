@@ -12,7 +12,7 @@ just check                        # Type-check
 just clippy                       # Lint (deny warnings)
 just coverage                     # Run tests with coverage (fail under 100%)
 just all                          # fmt + clippy + coverage
-cargo run --bin ranger -- --help  # CLI usage
+ranger --help                     # CLI usage (installed binary)
 ```
 
 ## Project Management
@@ -22,8 +22,10 @@ Use the `ranger` CLI to manage tasks for this project. The database lives at the
 ### Setup (first time only)
 
 ```bash
-cargo run --bin ranger -- backlog create "Ranger"
+ranger backlog create "Ranger"
 ```
+
+> **Note:** Always use the installed `ranger` binary for PM tasks, not `cargo run`. The repo may be in a non-compiling state during development. Install with `cargo install --path . --locked`.
 
 ### Workflow
 
