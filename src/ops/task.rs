@@ -157,20 +157,14 @@ pub async fn edit(
     Ok(task)
 }
 
-/// Compute a position string for a task within a backlog.
-///
-/// When both bounds are None, appends after the last task in the backlog.
-/// When `before_task_id` or `after_task_id` is given, positions relative
-/// to those tasks. `task_id` is excluded from adjacent-position lookups
-/// (relevant for moves where the task already has a position).
-async fn resolve_position(
+pub async fn move_task(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     task_id: i64,
+    backlog_id: i64,
     before_task_id: Option<i64>,
     after_task_id: Option<i64>,
-) -> Result<String, RangerError> {
-    if before_task_id.is_none() && after_task_id.is_none() {
+) -> Result<(), RangerError> {
+    let new_pos = if before_task_id.is_none() && after_task_id.is_none() {
         // Append to end of backlog
         let last_pos: Option<String> = sqlx::query_scalar(
             "SELECT bt.position FROM backlog_tasks bt \
@@ -181,90 +175,73 @@ async fn resolve_position(
         .fetch_optional(&mut *conn)
         .await?;
 
-        return Ok(position::between(last_pos.as_deref().unwrap_or(""), ""));
-    }
-
-    // "before" task = the task we want to appear after us (upper bound)
-    // "after" task = the task we want to appear before us (lower bound)
-    let upper_bound: Option<String> = if let Some(id) = before_task_id {
-        sqlx::query_scalar(
-            "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
-        )
-        .bind(backlog_id)
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?
+        position::between(last_pos.as_deref().unwrap_or(""), "")
     } else {
-        None
-    };
-
-    let lower_bound: Option<String> = if let Some(id) = after_task_id {
-        sqlx::query_scalar(
-            "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
-        )
-        .bind(backlog_id)
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?
-    } else {
-        None
-    };
-
-    // When only one bound is given, find the adjacent task's position
-    // to avoid collisions with existing positions.
-    let (lower, upper) = match (&lower_bound, &upper_bound) {
-        (Some(low), None) => {
-            // --after only: find the next task's position as upper bound
-            let next: Option<String> = sqlx::query_scalar(
-                "SELECT position FROM backlog_tasks \
-                 WHERE backlog_id = ? AND task_id != ? AND position > ? \
-                 ORDER BY position ASC LIMIT 1",
+        // "before" task = the task we want to appear after us (upper bound)
+        // "after" task = the task we want to appear before us (lower bound)
+        let upper_bound: Option<String> = if let Some(id) = before_task_id {
+            sqlx::query_scalar(
+                "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
             )
             .bind(backlog_id)
-            .bind(task_id)
-            .bind(low)
+            .bind(id)
             .fetch_optional(&mut *conn)
-            .await?;
-            (Some(low.clone()), next)
-        }
-        (None, Some(up)) => {
-            // --before only: find the previous task's position as lower bound
-            let prev: Option<String> = sqlx::query_scalar(
-                "SELECT position FROM backlog_tasks \
-                 WHERE backlog_id = ? AND task_id != ? AND position < ? \
-                 ORDER BY position DESC LIMIT 1",
+            .await?
+        } else {
+            None
+        };
+
+        let lower_bound: Option<String> = if let Some(id) = after_task_id {
+            sqlx::query_scalar(
+                "SELECT position FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?",
             )
             .bind(backlog_id)
-            .bind(task_id)
-            .bind(up)
+            .bind(id)
             .fetch_optional(&mut *conn)
-            .await?;
-            (prev, Some(up.clone()))
-        }
-        _ => (lower_bound.clone(), upper_bound.clone()),
+            .await?
+        } else {
+            None
+        };
+
+        // When only one bound is given, find the adjacent task's position
+        // to avoid collisions with existing positions.
+        let (lower, upper) = match (&lower_bound, &upper_bound) {
+            (Some(low), None) => {
+                // --after only: find the next task's position as upper bound
+                let next: Option<String> = sqlx::query_scalar(
+                    "SELECT position FROM backlog_tasks \
+                     WHERE backlog_id = ? AND task_id != ? AND position > ? \
+                     ORDER BY position ASC LIMIT 1",
+                )
+                .bind(backlog_id)
+                .bind(task_id)
+                .bind(low)
+                .fetch_optional(&mut *conn)
+                .await?;
+                (Some(low.clone()), next)
+            }
+            (None, Some(up)) => {
+                // --before only: find the previous task's position as lower bound
+                let prev: Option<String> = sqlx::query_scalar(
+                    "SELECT position FROM backlog_tasks \
+                     WHERE backlog_id = ? AND task_id != ? AND position < ? \
+                     ORDER BY position DESC LIMIT 1",
+                )
+                .bind(backlog_id)
+                .bind(task_id)
+                .bind(up)
+                .fetch_optional(&mut *conn)
+                .await?;
+                (prev, Some(up.clone()))
+            }
+            _ => (lower_bound.clone(), upper_bound.clone()),
+        };
+
+        position::between(
+            lower.as_deref().unwrap_or(""),
+            upper.as_deref().unwrap_or(""),
+        )
     };
-
-    Ok(position::between(
-        lower.as_deref().unwrap_or(""),
-        upper.as_deref().unwrap_or(""),
-    ))
-}
-
-pub async fn move_task(
-    conn: &mut SqliteConnection,
-    task_id: i64,
-    backlog_id: i64,
-    before_task_id: Option<i64>,
-    after_task_id: Option<i64>,
-) -> Result<(), RangerError> {
-    let new_pos = resolve_position(
-        &mut *conn,
-        backlog_id,
-        task_id,
-        before_task_id,
-        after_task_id,
-    )
-    .await?;
 
     sqlx::query("UPDATE backlog_tasks SET position = ? WHERE backlog_id = ? AND task_id = ?")
         .bind(&new_pos)

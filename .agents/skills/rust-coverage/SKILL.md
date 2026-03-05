@@ -236,6 +236,8 @@ llvm-cov show -object bin1 -object bin2 --instr-profile=merged.profdata
 
 **Dead code appears uncovered**: Unreachable code still gets instrumented. If coverage matters, delete dead code rather than excluding it.
 
+**Stale incremental artifacts with grcov**: Incremental compilation reuses old object files with outdated debug info, causing grcov to report phantom uncovered lines. Set `CARGO_INCREMENTAL=0` for coverage builds, or run `cargo clean` before measuring.
+
 **Proc macros and build scripts**: Not instrumented by default. Use `--include-build-script` if needed. When using `--no-rustc-wrapper` with `--target`, proc macros won't show coverage.
 
 **Doctests**: Experimental. Enable with `--doctests` (nightly only).

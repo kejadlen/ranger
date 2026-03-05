@@ -18,9 +18,10 @@ coverage:
     #!/usr/bin/env bash
     set -euo pipefail
     export RUSTFLAGS="-Cinstrument-coverage"
+    export CARGO_INCREMENTAL=0
     export LLVM_PROFILE_FILE="target/coverage/%p-%m.profraw"
     rm -rf target/coverage
-    cargo test --workspace
+    cargo test --workspace -q
     REPORT=$(grcov target/coverage \
         --binary-path ./target/debug/ \
         -s . \
