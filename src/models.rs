@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+use crate::timestamp::Timestamp;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
@@ -68,8 +70,8 @@ pub struct Backlog {
     pub id: i64,
     pub key: String,
     pub name: String,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -80,8 +82,8 @@ pub struct Task {
     pub title: String,
     pub description: Option<String>,
     pub state: State,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -89,7 +91,7 @@ pub struct Comment {
     pub id: i64,
     pub task_id: i64,
     pub body: String,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

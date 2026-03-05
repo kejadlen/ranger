@@ -9,7 +9,7 @@ path = "src/bin/ranger/main.rs"
 
 [dependencies]
 anyhow = "*"
-chrono = { version = "*", features = ["serde"] }
+jiff = { version = "*", features = ["serde"] }
 clap = { version = "*", features = ["derive", "env"] }
 rand = "*"
 serde = { version = "*", features = ["derive"] }
