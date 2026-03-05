@@ -8,6 +8,7 @@ use crate::output;
 #[derive(Subcommand)]
 pub enum BlockerCommands {
     /// Add a blocker to a task
+    #[command(visible_alias = "a")]
     Add {
         /// Task key or prefix (the blocked task)
         task: String,
@@ -15,6 +16,7 @@ pub enum BlockerCommands {
         blocked_by: String,
     },
     /// Remove a blocker from a task
+    #[command(visible_alias = "rm")]
     Remove {
         /// Task key or prefix (the blocked task)
         task: String,

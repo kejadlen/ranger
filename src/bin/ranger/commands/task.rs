@@ -10,10 +10,10 @@ use crate::output;
 #[derive(Args)]
 pub struct PositionArgs {
     /// Place before this task key
-    #[arg(long)]
+    #[arg(long, short = 'B')]
     before: Option<String>,
     /// Place after this task key
-    #[arg(long)]
+    #[arg(long, short = 'A')]
     after: Option<String>,
 }
 
@@ -36,6 +36,7 @@ impl PositionArgs {
 #[derive(Subcommand)]
 pub enum TaskCommands {
     /// Create a new task
+    #[command(visible_alias = "new")]
     Create {
         /// Task title
         title: String,
@@ -58,6 +59,7 @@ pub enum TaskCommands {
         position: PositionArgs,
     },
     /// List tasks
+    #[command(visible_alias = "ls")]
     List {
         /// Filter by backlog key or prefix
         #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
@@ -67,11 +69,13 @@ pub enum TaskCommands {
         state: Option<String>,
     },
     /// Show task details
+    #[command(visible_alias = "s")]
     Show {
         /// Task key or prefix
         key: String,
     },
     /// Edit a task
+    #[command(visible_alias = "e")]
     Edit {
         /// Task key or prefix
         key: String,
@@ -86,6 +90,7 @@ pub enum TaskCommands {
         state: Option<String>,
     },
     /// Move a task's position within a backlog
+    #[command(visible_alias = "mv")]
     Move {
         /// Task key or prefix
         key: String,
@@ -96,6 +101,7 @@ pub enum TaskCommands {
         position: PositionArgs,
     },
     /// Add a task to a backlog
+    #[command(visible_alias = "a")]
     Add {
         /// Task key or prefix
         task: String,
@@ -104,6 +110,7 @@ pub enum TaskCommands {
         backlog: String,
     },
     /// Remove a task from a backlog
+    #[command(visible_alias = "rm")]
     Remove {
         /// Task key or prefix
         task: String,
@@ -112,6 +119,7 @@ pub enum TaskCommands {
         backlog: String,
     },
     /// Delete a task entirely
+    #[command(visible_alias = "del")]
     Delete {
         /// Task key or prefix
         key: String,

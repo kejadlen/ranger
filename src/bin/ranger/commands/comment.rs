@@ -8,6 +8,7 @@ use crate::output;
 #[derive(Subcommand)]
 pub enum CommentCommands {
     /// Add a comment to a task
+    #[command(visible_alias = "a")]
     Add {
         /// Task key or prefix
         task: String,
@@ -15,6 +16,7 @@ pub enum CommentCommands {
         body: String,
     },
     /// List comments on a task
+    #[command(visible_alias = "ls")]
     List {
         /// Task key or prefix
         task: String,

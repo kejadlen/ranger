@@ -8,6 +8,7 @@ use crate::output;
 #[derive(Subcommand)]
 pub enum TagCommands {
     /// List all tags
+    #[command(visible_alias = "ls")]
     List,
 }
 

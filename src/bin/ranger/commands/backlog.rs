@@ -18,6 +18,7 @@ pub enum BacklogCommands {
     #[command(visible_alias = "ls")]
     List,
     /// Show a backlog's details
+    #[command(visible_alias = "s")]
     Show {
         /// Backlog name
         #[arg(env = "RANGER_DEFAULT_BACKLOG")]
