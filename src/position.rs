@@ -1,36 +1,9 @@
-/// Generate a position string between `before` and `after`.
-/// Both are optional: None means "the boundary" (start or end).
-/// Uses base-26 (a-z) characters with lexicographic ordering.
-pub fn midpoint(before: Option<&str>, after: Option<&str>) -> String {
-    match (before, after) {
-        (None, None) => "m".to_string(),
-        (None, Some(b)) => generate_between("", b),
-        (Some(a), None) => generate_after(a),
-        (Some(a), Some(b)) => {
-            debug_assert!(a < b, "before ({a}) must be less than after ({b})");
-            generate_between(a, b)
-        }
-    }
-}
+/// Generate a position string lexicographically between `a` and `b`.
+/// Uses base-26 (a-z) characters. Empty `a` means "beginning" (digits
+/// default to 0), empty `b` means "end" (digits default to 25/'z').
+pub fn between(a: &str, b: &str) -> String {
+    debug_assert!(b.is_empty() || a < b, "a ({a}) must be less than b ({b})");
 
-fn generate_after(a: &str) -> String {
-    let mut digits: Vec<u8> = a.bytes().map(|c| c - b'a').collect();
-
-    // Find the rightmost character with room to increment toward 'z'
-    for i in (0..digits.len()).rev() {
-        let mid = (digits[i] as u16 + 25) / 2;
-        if mid as u8 > digits[i] {
-            digits[i] = mid as u8;
-            digits.truncate(i + 1);
-            return digits.iter().map(|&d| (d + b'a') as char).collect();
-        }
-    }
-
-    // All characters near 'z'; extend with 'm'
-    format!("{a}m")
-}
-
-fn generate_between(a: &str, b: &str) -> String {
     let a_digits: Vec<u8> = a.bytes().map(|c| c - b'a').collect();
     let b_digits: Vec<u8> = b.bytes().map(|c| c - b'a').collect();
 
@@ -70,7 +43,7 @@ fn generate_between(a: &str, b: &str) -> String {
     // Structurally unreachable: the inner loop always terminates via the
     // mid2 > da check within 16 extra iterations (base-26 guarantees room
     // between any digit and 'z').
-    unreachable!("generate_between exhausted without finding a midpoint") // cov-excl-line
+    unreachable!("between exhausted without finding a midpoint") // cov-excl-line
 }
 
 #[cfg(test)]
@@ -78,43 +51,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn first_position() {
-        let pos = midpoint(None, None);
-        assert_eq!(pos, "m");
+    fn between_empty_bounds() {
+        assert_eq!(between("", ""), "m");
     }
 
     #[test]
     fn before_existing() {
-        let pos = midpoint(None, Some("m"));
+        let pos = between("", "m");
         assert!(*pos < *"m", "expected {pos} < m");
     }
 
     #[test]
     fn after_existing() {
-        let pos = midpoint(Some("m"), None);
+        let pos = between("m", "");
         assert!(*pos > *"m", "expected {pos} > m");
     }
 
     #[test]
     fn between_two() {
-        let pos = midpoint(Some("a"), Some("z"));
+        let pos = between("a", "z");
         assert!(*pos > *"a", "expected {pos} > a");
         assert!(*pos < *"z", "expected {pos} < z");
     }
 
     #[test]
     fn between_adjacent() {
-        let pos = midpoint(Some("a"), Some("b"));
+        let pos = between("a", "b");
         assert!(*pos > *"a", "expected {pos} > a");
         assert!(*pos < *"b", "expected {pos} < b");
     }
 
     #[test]
     fn ordering_is_stable_over_many_appends() {
-        let mut positions = vec![midpoint(None, None)];
+        let mut positions = vec!["m".to_string()];
         for _ in 0..20 {
             let last = positions.last().unwrap().clone();
-            positions.push(midpoint(Some(&last), None));
+            positions.push(between(&last, ""));
         }
         for window in positions.windows(2) {
             assert!(window[0] < window[1]);
@@ -123,10 +95,10 @@ mod tests {
 
     #[test]
     fn ordering_is_stable_over_many_prepends() {
-        let mut positions = vec![midpoint(None, None)];
+        let mut positions = vec!["m".to_string()];
         for _ in 0..20 {
             let first = positions.first().unwrap().clone();
-            positions.insert(0, midpoint(None, Some(&first)));
+            positions.insert(0, between("", &first));
         }
         for window in positions.windows(2) {
             assert!(window[0] < window[1]);
@@ -135,16 +107,13 @@ mod tests {
 
     #[test]
     fn ordering_is_stable_over_many_interleaved_inserts() {
-        // Build a list by always inserting in the middle
-        let mut positions = vec![
-            midpoint(None, None), // first
-        ];
-        positions.push(midpoint(Some(&positions[0]), None)); // second
+        let mut positions = vec!["m".to_string()];
+        positions.push(between(&positions[0], ""));
 
         for _ in 0..20 {
             let a = &positions[positions.len() - 2].clone();
             let b = &positions[positions.len() - 1].clone();
-            let mid = midpoint(Some(a), Some(b));
+            let mid = between(a, b);
             assert!(mid > *a);
             assert!(mid < *b);
             positions.insert(positions.len() - 1, mid);

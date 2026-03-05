@@ -41,7 +41,7 @@ pub async fn create(
     .fetch_optional(&mut *conn)
     .await?;
 
-    let new_pos = position::midpoint(last_pos.as_deref(), None);
+    let new_pos = position::between(last_pos.as_deref().unwrap_or(""), "");
 
     sqlx::query("INSERT INTO backlog_tasks (backlog_id, task_id, position) VALUES (?, ?, ?)")
         .bind(params.backlog_id)
@@ -181,7 +181,7 @@ async fn resolve_position(
         .fetch_optional(&mut *conn)
         .await?;
 
-        return Ok(position::midpoint(last_pos.as_deref(), None));
+        return Ok(position::between(last_pos.as_deref().unwrap_or(""), ""));
     }
 
     // "before" task = the task we want to appear after us (upper bound)
@@ -244,7 +244,10 @@ async fn resolve_position(
         _ => (lower_bound.clone(), upper_bound.clone()),
     };
 
-    Ok(position::midpoint(lower.as_deref(), upper.as_deref()))
+    Ok(position::between(
+        lower.as_deref().unwrap_or(""),
+        upper.as_deref().unwrap_or(""),
+    ))
 }
 
 pub async fn move_task(
@@ -287,7 +290,7 @@ pub async fn add_to_backlog(
     .fetch_optional(&mut *conn)
     .await?;
 
-    let new_pos = position::midpoint(last_pos.as_deref(), None);
+    let new_pos = position::between(last_pos.as_deref().unwrap_or(""), "");
 
     sqlx::query("INSERT INTO backlog_tasks (backlog_id, task_id, position) VALUES (?, ?, ?)")
         .bind(backlog_id)
