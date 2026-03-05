@@ -1,9 +1,9 @@
 use crate::error::RangerError;
 use crate::models::Blocker;
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqliteConnection;
 
 pub async fn add(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     task_id: i64,
     blocked_by_task_id: i64,
 ) -> Result<Blocker, RangerError> {
@@ -13,30 +13,33 @@ pub async fn add(
     )
     .bind(task_id)
     .bind(blocked_by_task_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(blocker)
 }
 
 pub async fn remove(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     task_id: i64,
     blocked_by_task_id: i64,
 ) -> Result<(), RangerError> {
     sqlx::query("DELETE FROM blockers WHERE task_id = ? AND blocked_by_task_id = ?")
         .bind(task_id)
         .bind(blocked_by_task_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     Ok(())
 }
 
-pub async fn list_for_task(pool: &SqlitePool, task_id: i64) -> Result<Vec<Blocker>, RangerError> {
+pub async fn list_for_task(
+    conn: &mut SqliteConnection,
+    task_id: i64,
+) -> Result<Vec<Blocker>, RangerError> {
     let blockers = sqlx::query_as::<_, Blocker>(
         "SELECT id, task_id, blocked_by_task_id FROM blockers WHERE task_id = ?",
     )
     .bind(task_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     Ok(blockers)
 }
@@ -48,7 +51,7 @@ mod tests {
     use crate::ops::{backlog, task};
     use tempfile::tempdir;
 
-    async fn test_pool() -> SqlitePool {
+    async fn test_pool() -> sqlx::SqlitePool {
         let dir = tempdir().unwrap();
         let dir = Box::leak(Box::new(dir));
         db::connect(&dir.path().join("test.db")).await.unwrap()
@@ -57,9 +60,10 @@ mod tests {
     #[tokio::test]
     async fn add_and_list_blockers() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = task::create(
-            &pool,
+            &mut conn,
             task::CreateTask {
                 title: "Blocked",
                 backlog_id: bl.id,
@@ -73,7 +77,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = task::create(
-            &pool,
+            &mut conn,
             task::CreateTask {
                 title: "Blocker",
                 backlog_id: bl.id,
@@ -87,9 +91,9 @@ mod tests {
         .await
         .unwrap();
 
-        add(&pool, t1.id, t2.id).await.unwrap();
+        add(&mut conn, t1.id, t2.id).await.unwrap();
 
-        let blockers = list_for_task(&pool, t1.id).await.unwrap();
+        let blockers = list_for_task(&mut conn, t1.id).await.unwrap();
         assert_eq!(blockers.len(), 1);
         assert_eq!(blockers[0].blocked_by_task_id, t2.id);
     }
@@ -97,9 +101,10 @@ mod tests {
     #[tokio::test]
     async fn remove_blocker() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = task::create(
-            &pool,
+            &mut conn,
             task::CreateTask {
                 title: "Blocked",
                 backlog_id: bl.id,
@@ -113,7 +118,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = task::create(
-            &pool,
+            &mut conn,
             task::CreateTask {
                 title: "Blocker",
                 backlog_id: bl.id,
@@ -127,10 +132,10 @@ mod tests {
         .await
         .unwrap();
 
-        add(&pool, t1.id, t2.id).await.unwrap();
-        remove(&pool, t1.id, t2.id).await.unwrap();
+        add(&mut conn, t1.id, t2.id).await.unwrap();
+        remove(&mut conn, t1.id, t2.id).await.unwrap();
 
-        let blockers = list_for_task(&pool, t1.id).await.unwrap();
+        let blockers = list_for_task(&mut conn, t1.id).await.unwrap();
         assert_eq!(blockers.len(), 0);
     }
 }

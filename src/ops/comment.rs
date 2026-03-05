@@ -1,25 +1,29 @@
 use crate::error::RangerError;
 use crate::models::Comment;
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqliteConnection;
 
-pub async fn add(pool: &SqlitePool, task_id: i64, body: &str) -> Result<Comment, RangerError> {
+pub async fn add(
+    conn: &mut SqliteConnection,
+    task_id: i64,
+    body: &str,
+) -> Result<Comment, RangerError> {
     let comment = sqlx::query_as::<_, Comment>(
         "INSERT INTO comments (task_id, body) VALUES (?, ?) \
          RETURNING id, task_id, body, created_at",
     )
     .bind(task_id)
     .bind(body)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(comment)
 }
 
-pub async fn list(pool: &SqlitePool, task_id: i64) -> Result<Vec<Comment>, RangerError> {
+pub async fn list(conn: &mut SqliteConnection, task_id: i64) -> Result<Vec<Comment>, RangerError> {
     let comments = sqlx::query_as::<_, Comment>(
         "SELECT id, task_id, body, created_at FROM comments WHERE task_id = ? ORDER BY created_at",
     )
     .bind(task_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     Ok(comments)
 }
@@ -40,9 +44,10 @@ mod tests {
     #[tokio::test]
     async fn add_and_list_comments() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t = task::create(
-            &pool,
+            &mut conn,
             task::CreateTask {
                 title: "Task",
                 backlog_id: bl.id,
@@ -56,10 +61,10 @@ mod tests {
         .await
         .unwrap();
 
-        add(&pool, t.id, "First comment").await.unwrap();
-        add(&pool, t.id, "Second comment").await.unwrap();
+        add(&mut conn, t.id, "First comment").await.unwrap();
+        add(&mut conn, t.id, "Second comment").await.unwrap();
 
-        let comments = list(&pool, t.id).await.unwrap();
+        let comments = list(&mut conn, t.id).await.unwrap();
         assert_eq!(comments.len(), 2);
         assert_eq!(comments[0].body, "First comment");
         assert_eq!(comments[1].body, "Second comment");

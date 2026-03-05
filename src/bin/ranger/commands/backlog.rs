@@ -26,22 +26,24 @@ pub enum BacklogCommands {
 }
 
 pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+
     match command {
         BacklogCommands::Create { name } => {
-            let backlog = ops::backlog::create(pool, &name).await?;
+            let backlog = ops::backlog::create(&mut conn, &name).await?;
             output::print(&backlog, json, print_backlog);
         }
         BacklogCommands::List => {
-            let backlogs = ops::backlog::list(pool).await?;
+            let backlogs = ops::backlog::list(&mut conn).await?;
             output::print_list(&backlogs, json, print_backlog);
         }
         BacklogCommands::Show { name } => {
-            let backlog = ops::backlog::get_by_name(pool, &name).await?;
+            let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;
 
             if json {
                 let mut state_groups = serde_json::Map::new();
                 for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
-                    let tasks = ops::task::list(pool, backlog.id, Some(state.clone())).await?;
+                    let tasks = ops::task::list(&mut conn, backlog.id, Some(state.clone())).await?;
                     if !tasks.is_empty() {
                         state_groups
                             .insert(state.to_string(), serde_json::to_value(&tasks).unwrap());
@@ -56,7 +58,7 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                 print_backlog_detail(&backlog);
 
                 for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
-                    let tasks = ops::task::list(pool, backlog.id, Some(state.clone())).await?;
+                    let tasks = ops::task::list(&mut conn, backlog.id, Some(state.clone())).await?;
                     if !tasks.is_empty() {
                         println!("\n[{}]", state);
                         for t in &tasks {

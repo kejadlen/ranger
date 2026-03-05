@@ -12,9 +12,11 @@ pub enum TagCommands {
 }
 
 pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+
     match command {
         TagCommands::List => {
-            let tags = ops::tag::list(pool).await?;
+            let tags = ops::tag::list(&mut conn).await?;
             output::print_list(&tags, json, |t| {
                 println!("{}", t.name);
             });

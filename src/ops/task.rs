@@ -2,7 +2,7 @@ use crate::error::RangerError;
 use crate::key;
 use crate::models::{State, Task};
 use crate::position;
-use sqlx::SqlitePool;
+use sqlx::sqlite::SqliteConnection;
 
 pub struct CreateTask<'a> {
     pub title: &'a str,
@@ -14,7 +14,10 @@ pub struct CreateTask<'a> {
     pub after_task_id: Option<i64>,
 }
 
-pub async fn create(pool: &SqlitePool, params: CreateTask<'_>) -> Result<Task, RangerError> {
+pub async fn create(
+    conn: &mut SqliteConnection,
+    params: CreateTask<'_>,
+) -> Result<Task, RangerError> {
     let key = key::generate_key();
     let state = params.state.unwrap_or(State::Icebox);
 
@@ -28,11 +31,11 @@ pub async fn create(pool: &SqlitePool, params: CreateTask<'_>) -> Result<Task, R
     .bind(params.title)
     .bind(params.description)
     .bind(state.as_str())
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
 
     let new_pos = resolve_position(
-        pool,
+        &mut *conn,
         params.backlog_id,
         task.id,
         params.before_task_id,
@@ -44,14 +47,14 @@ pub async fn create(pool: &SqlitePool, params: CreateTask<'_>) -> Result<Task, R
         .bind(params.backlog_id)
         .bind(task.id)
         .bind(&new_pos)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
 
     Ok(task)
 }
 
 pub async fn list(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     backlog_id: i64,
     state_filter: Option<State>,
 ) -> Result<Vec<Task>, RangerError> {
@@ -66,7 +69,7 @@ pub async fn list(
         )
         .bind(backlog_id)
         .bind(state.as_str())
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?
     } else {
         sqlx::query_as::<_, Task>(
@@ -78,31 +81,34 @@ pub async fn list(
              ORDER BY bt.position",
         )
         .bind(backlog_id)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?
     };
     Ok(tasks)
 }
 
-pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Task, RangerError> {
+pub async fn get_by_id(conn: &mut SqliteConnection, id: i64) -> Result<Task, RangerError> {
     let task = sqlx::query_as::<_, Task>(
         "SELECT id, key, parent_id, title, description, state, created_at, updated_at \
          FROM tasks WHERE id = ?",
     )
     .bind(id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(task)
 }
 
-pub async fn get_by_key_prefix(pool: &SqlitePool, prefix: &str) -> Result<Task, RangerError> {
+pub async fn get_by_key_prefix(
+    conn: &mut SqliteConnection,
+    prefix: &str,
+) -> Result<Task, RangerError> {
     let pattern = format!("{prefix}%");
     let matches = sqlx::query_as::<_, Task>(
         "SELECT id, key, parent_id, title, description, state, created_at, updated_at \
          FROM tasks WHERE key LIKE ?",
     )
     .bind(&pattern)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
 
     match matches.len() {
@@ -113,7 +119,7 @@ pub async fn get_by_key_prefix(pool: &SqlitePool, prefix: &str) -> Result<Task, 
 }
 
 pub async fn edit(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     task_id: i64,
     title: Option<&str>,
     description: Option<&str>,
@@ -123,21 +129,21 @@ pub async fn edit(
         sqlx::query("UPDATE tasks SET title = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
             .bind(title)
             .bind(task_id)
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
     }
     if let Some(description) = description {
         sqlx::query("UPDATE tasks SET description = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
             .bind(description)
             .bind(task_id)
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
     }
     if let Some(state) = &state {
         sqlx::query("UPDATE tasks SET state = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
             .bind(state.as_str())
             .bind(task_id)
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
     }
 
@@ -146,7 +152,7 @@ pub async fn edit(
          FROM tasks WHERE id = ?",
     )
     .bind(task_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(task)
 }
@@ -158,7 +164,7 @@ pub async fn edit(
 /// to those tasks. `task_id` is excluded from adjacent-position lookups
 /// (relevant for moves where the task already has a position).
 async fn resolve_position(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     backlog_id: i64,
     task_id: i64,
     before_task_id: Option<i64>,
@@ -172,7 +178,7 @@ async fn resolve_position(
              ORDER BY bt.position DESC LIMIT 1",
         )
         .bind(backlog_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await?;
 
         return Ok(position::midpoint(last_pos.as_deref(), None));
@@ -186,7 +192,7 @@ async fn resolve_position(
         )
         .bind(backlog_id)
         .bind(id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await?
     } else {
         None
@@ -198,7 +204,7 @@ async fn resolve_position(
         )
         .bind(backlog_id)
         .bind(id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await?
     } else {
         None
@@ -217,7 +223,7 @@ async fn resolve_position(
             .bind(backlog_id)
             .bind(task_id)
             .bind(low)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?;
             (Some(low.clone()), next)
         }
@@ -231,7 +237,7 @@ async fn resolve_position(
             .bind(backlog_id)
             .bind(task_id)
             .bind(up)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?;
             (prev, Some(up.clone()))
         }
@@ -242,34 +248,40 @@ async fn resolve_position(
 }
 
 pub async fn move_task(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     task_id: i64,
     backlog_id: i64,
     before_task_id: Option<i64>,
     after_task_id: Option<i64>,
 ) -> Result<(), RangerError> {
-    let new_pos =
-        resolve_position(pool, backlog_id, task_id, before_task_id, after_task_id).await?;
+    let new_pos = resolve_position(
+        &mut *conn,
+        backlog_id,
+        task_id,
+        before_task_id,
+        after_task_id,
+    )
+    .await?;
 
     sqlx::query("UPDATE backlog_tasks SET position = ? WHERE backlog_id = ? AND task_id = ?")
         .bind(&new_pos)
         .bind(backlog_id)
         .bind(task_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
 
     Ok(())
 }
 
 pub async fn add_to_backlog(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     task_id: i64,
     backlog_id: i64,
 ) -> Result<(), RangerError> {
     // Get the task's state to find proper position
     let state: String = sqlx::query_scalar("SELECT state FROM tasks WHERE id = ?")
         .bind(task_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await?;
 
     let last_pos: Option<String> = sqlx::query_scalar(
@@ -280,7 +292,7 @@ pub async fn add_to_backlog(
     )
     .bind(backlog_id)
     .bind(&state)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await?;
 
     let new_pos = position::midpoint(last_pos.as_deref(), None);
@@ -289,29 +301,29 @@ pub async fn add_to_backlog(
         .bind(backlog_id)
         .bind(task_id)
         .bind(&new_pos)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
 
     Ok(())
 }
 
 pub async fn remove_from_backlog(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     task_id: i64,
     backlog_id: i64,
 ) -> Result<(), RangerError> {
     sqlx::query("DELETE FROM backlog_tasks WHERE backlog_id = ? AND task_id = ?")
         .bind(backlog_id)
         .bind(task_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     Ok(())
 }
 
-pub async fn delete(pool: &SqlitePool, task_id: i64) -> Result<(), RangerError> {
+pub async fn delete(conn: &mut SqliteConnection, task_id: i64) -> Result<(), RangerError> {
     sqlx::query("DELETE FROM tasks WHERE id = ?")
         .bind(task_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     Ok(())
 }
@@ -324,7 +336,7 @@ mod tests {
     use crate::ops::backlog;
     use tempfile::tempdir;
 
-    async fn test_pool() -> SqlitePool {
+    async fn test_pool() -> sqlx::SqlitePool {
         let dir = tempdir().unwrap();
         let dir = Box::leak(Box::new(dir));
         db::connect(&dir.path().join("test.db")).await.unwrap()
@@ -333,9 +345,10 @@ mod tests {
     #[tokio::test]
     async fn create_task_in_backlog() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "My Task",
                 backlog_id: bl.id,
@@ -359,7 +372,7 @@ mod tests {
         )
         .bind(bl.id)
         .bind(task.id)
-        .fetch_one(&pool)
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
         assert_eq!(count, 1);
@@ -368,9 +381,10 @@ mod tests {
     #[tokio::test]
     async fn list_tasks_ordered_by_position() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -384,7 +398,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -398,7 +412,7 @@ mod tests {
         .await
         .unwrap();
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Third",
                 backlog_id: bl.id,
@@ -412,7 +426,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks.len(), 3);
         assert_eq!(tasks[0].id, t1.id);
         assert_eq!(tasks[1].id, t2.id);
@@ -422,9 +436,10 @@ mod tests {
     #[tokio::test]
     async fn list_tasks_with_state_filter() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Icebox task",
                 backlog_id: bl.id,
@@ -438,7 +453,7 @@ mod tests {
         .await
         .unwrap();
         create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Queued task",
                 backlog_id: bl.id,
@@ -452,11 +467,11 @@ mod tests {
         .await
         .unwrap();
 
-        let icebox = list(&pool, bl.id, Some(State::Icebox)).await.unwrap();
+        let icebox = list(&mut conn, bl.id, Some(State::Icebox)).await.unwrap();
         assert_eq!(icebox.len(), 1);
         assert_eq!(icebox[0].title, "Icebox task");
 
-        let queued = list(&pool, bl.id, Some(State::Queued)).await.unwrap();
+        let queued = list(&mut conn, bl.id, Some(State::Queued)).await.unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].title, "Queued task");
     }
@@ -464,9 +479,10 @@ mod tests {
     #[tokio::test]
     async fn get_task_by_key_prefix() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Find me",
                 backlog_id: bl.id,
@@ -480,16 +496,17 @@ mod tests {
         .await
         .unwrap();
 
-        let found = get_by_key_prefix(&pool, &task.key[..3]).await.unwrap();
+        let found = get_by_key_prefix(&mut conn, &task.key[..3]).await.unwrap();
         assert_eq!(found.id, task.id);
     }
 
     #[tokio::test]
     async fn edit_task_fields() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Original",
                 backlog_id: bl.id,
@@ -504,7 +521,7 @@ mod tests {
         .unwrap();
 
         let updated = edit(
-            &pool,
+            &mut conn,
             task.id,
             Some("Updated"),
             Some("A description"),
@@ -521,10 +538,11 @@ mod tests {
     #[tokio::test]
     async fn add_task_to_second_backlog() {
         let pool = test_pool().await;
-        let bl1 = backlog::create(&pool, "First").await.unwrap();
-        let bl2 = backlog::create(&pool, "Second").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl1 = backlog::create(&mut conn, "First").await.unwrap();
+        let bl2 = backlog::create(&mut conn, "Second").await.unwrap();
         let task = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Shared",
                 backlog_id: bl1.id,
@@ -538,10 +556,10 @@ mod tests {
         .await
         .unwrap();
 
-        add_to_backlog(&pool, task.id, bl2.id).await.unwrap();
+        add_to_backlog(&mut conn, task.id, bl2.id).await.unwrap();
 
-        let tasks1 = list(&pool, bl1.id, None).await.unwrap();
-        let tasks2 = list(&pool, bl2.id, None).await.unwrap();
+        let tasks1 = list(&mut conn, bl1.id, None).await.unwrap();
+        let tasks2 = list(&mut conn, bl2.id, None).await.unwrap();
         assert_eq!(tasks1.len(), 1);
         assert_eq!(tasks2.len(), 1);
         assert_eq!(tasks1[0].id, tasks2[0].id);
@@ -550,9 +568,10 @@ mod tests {
     #[tokio::test]
     async fn remove_task_from_backlog() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Remove me",
                 backlog_id: bl.id,
@@ -566,18 +585,21 @@ mod tests {
         .await
         .unwrap();
 
-        remove_from_backlog(&pool, task.id, bl.id).await.unwrap();
+        remove_from_backlog(&mut conn, task.id, bl.id)
+            .await
+            .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks.len(), 0);
     }
 
     #[tokio::test]
     async fn move_task_before() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -591,7 +613,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -605,7 +627,7 @@ mod tests {
         .await
         .unwrap();
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Third",
                 backlog_id: bl.id,
@@ -620,11 +642,11 @@ mod tests {
         .unwrap();
 
         // Move t3 before t1 — should produce order: t3, t1, t2
-        move_task(&pool, t3.id, bl.id, Some(t1.id), None)
+        move_task(&mut conn, t3.id, bl.id, Some(t1.id), None)
             .await
             .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t3.id, "t3 should be first");
         assert_eq!(tasks[1].id, t1.id, "t1 should be second");
         assert_eq!(tasks[2].id, t2.id, "t2 should be third");
@@ -633,9 +655,10 @@ mod tests {
     #[tokio::test]
     async fn move_task_after() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -649,7 +672,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -663,7 +686,7 @@ mod tests {
         .await
         .unwrap();
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Third",
                 backlog_id: bl.id,
@@ -678,11 +701,11 @@ mod tests {
         .unwrap();
 
         // Move t1 after t3 — should produce order: t2, t3, t1
-        move_task(&pool, t1.id, bl.id, None, Some(t3.id))
+        move_task(&mut conn, t1.id, bl.id, None, Some(t3.id))
             .await
             .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t2.id, "t2 should be first");
         assert_eq!(tasks[1].id, t3.id, "t3 should be second");
         assert_eq!(tasks[2].id, t1.id, "t1 should be third");
@@ -691,9 +714,10 @@ mod tests {
     #[tokio::test]
     async fn move_task_after_into_middle() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -707,7 +731,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -721,7 +745,7 @@ mod tests {
         .await
         .unwrap();
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Third",
                 backlog_id: bl.id,
@@ -736,11 +760,11 @@ mod tests {
         .unwrap();
 
         // Move t3 after t1 (but before t2) — should produce order: t1, t3, t2
-        move_task(&pool, t3.id, bl.id, None, Some(t1.id))
+        move_task(&mut conn, t3.id, bl.id, None, Some(t1.id))
             .await
             .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t1.id, "t1 should be first");
         assert_eq!(tasks[1].id, t3.id, "t3 should be second (after t1)");
         assert_eq!(tasks[2].id, t2.id, "t2 should be third");
@@ -749,9 +773,10 @@ mod tests {
     #[tokio::test]
     async fn move_task_before_from_middle() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -765,7 +790,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -779,7 +804,7 @@ mod tests {
         .await
         .unwrap();
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Third",
                 backlog_id: bl.id,
@@ -794,11 +819,11 @@ mod tests {
         .unwrap();
 
         // Move t1 before t3 (but after t2) — should produce order: t2, t1, t3
-        move_task(&pool, t1.id, bl.id, Some(t3.id), None)
+        move_task(&mut conn, t1.id, bl.id, Some(t3.id), None)
             .await
             .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t2.id, "t2 should be first");
         assert_eq!(tasks[1].id, t1.id, "t1 should be second (before t3)");
         assert_eq!(tasks[2].id, t3.id, "t3 should be third");
@@ -807,9 +832,10 @@ mod tests {
     #[tokio::test]
     async fn move_task_between() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -823,7 +849,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -837,7 +863,7 @@ mod tests {
         .await
         .unwrap();
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Third",
                 backlog_id: bl.id,
@@ -852,11 +878,11 @@ mod tests {
         .unwrap();
 
         // Move t3 after t1 and before t2 — should produce order: t1, t3, t2
-        move_task(&pool, t3.id, bl.id, Some(t2.id), Some(t1.id))
+        move_task(&mut conn, t3.id, bl.id, Some(t2.id), Some(t1.id))
             .await
             .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t1.id, "t1 should be first");
         assert_eq!(tasks[1].id, t3.id, "t3 should be second");
         assert_eq!(tasks[2].id, t2.id, "t2 should be third");
@@ -865,9 +891,10 @@ mod tests {
     #[tokio::test]
     async fn delete_task() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Delete me",
                 backlog_id: bl.id,
@@ -881,22 +908,23 @@ mod tests {
         .await
         .unwrap();
 
-        delete(&pool, task.id).await.unwrap();
+        delete(&mut conn, task.id).await.unwrap();
 
-        let result = get_by_key_prefix(&pool, &task.key).await;
+        let result = get_by_key_prefix(&mut conn, &task.key).await;
         assert!(result.is_err());
 
         // backlog_tasks should be cleaned up by cascade
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks.len(), 0);
     }
 
     #[tokio::test]
     async fn create_task_before() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -910,7 +938,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -926,7 +954,7 @@ mod tests {
 
         // Create a task before t1 — should produce order: t3, t1, t2
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Before first",
                 backlog_id: bl.id,
@@ -940,7 +968,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t3.id, "t3 should be first");
         assert_eq!(tasks[1].id, t1.id, "t1 should be second");
         assert_eq!(tasks[2].id, t2.id, "t2 should be third");
@@ -949,9 +977,10 @@ mod tests {
     #[tokio::test]
     async fn create_task_after() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -965,7 +994,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -981,7 +1010,7 @@ mod tests {
 
         // Create a task after t1 — should produce order: t1, t3, t2
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "After first",
                 backlog_id: bl.id,
@@ -995,7 +1024,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t1.id, "t1 should be first");
         assert_eq!(tasks[1].id, t3.id, "t3 should be second");
         assert_eq!(tasks[2].id, t2.id, "t2 should be third");
@@ -1004,9 +1033,10 @@ mod tests {
     #[tokio::test]
     async fn create_task_between() {
         let pool = test_pool().await;
-        let bl = backlog::create(&pool, "Test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
@@ -1020,7 +1050,7 @@ mod tests {
         .await
         .unwrap();
         let t2 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
@@ -1036,7 +1066,7 @@ mod tests {
 
         // Create a task after t1 and before t2 — should produce order: t1, t3, t2
         let t3 = create(
-            &pool,
+            &mut conn,
             CreateTask {
                 title: "Between",
                 backlog_id: bl.id,
@@ -1050,7 +1080,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&pool, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, None).await.unwrap();
         assert_eq!(tasks[0].id, t1.id, "t1 should be first");
         assert_eq!(tasks[1].id, t3.id, "t3 should be second");
         assert_eq!(tasks[2].id, t2.id, "t2 should be third");

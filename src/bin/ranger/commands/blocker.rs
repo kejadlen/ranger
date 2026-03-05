@@ -24,19 +24,21 @@ pub enum BlockerCommands {
 }
 
 pub async fn run(pool: &SqlitePool, command: BlockerCommands, json: bool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+
     match command {
         BlockerCommands::Add { task, blocked_by } => {
-            let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let bt = ops::task::get_by_key_prefix(pool, &blocked_by).await?;
-            let blocker = ops::blocker::add(pool, t.id, bt.id).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let bt = ops::task::get_by_key_prefix(&mut conn, &blocked_by).await?;
+            let blocker = ops::blocker::add(&mut conn, t.id, bt.id).await?;
             output::print(&blocker, json, |_| {
                 println!("{} blocked by {} {}", &t.key[..8], &bt.key[..8], bt.title);
             });
         }
         BlockerCommands::Remove { task, blocked_by } => {
-            let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let bt = ops::task::get_by_key_prefix(pool, &blocked_by).await?;
-            ops::blocker::remove(pool, t.id, bt.id).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let bt = ops::task::get_by_key_prefix(&mut conn, &blocked_by).await?;
+            ops::blocker::remove(&mut conn, t.id, bt.id).await?;
             println!("Removed blocker {} from {}", &bt.key[..8], &t.key[..8]);
         }
     }

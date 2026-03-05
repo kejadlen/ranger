@@ -22,17 +22,19 @@ pub enum CommentCommands {
 }
 
 pub async fn run(pool: &SqlitePool, command: CommentCommands, json: bool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+
     match command {
         CommentCommands::Add { task, body } => {
-            let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let comment = ops::comment::add(pool, t.id, &body).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let comment = ops::comment::add(&mut conn, t.id, &body).await?;
             output::print(&comment, json, |c| {
                 println!("[{}] {}", c.created_at, c.body);
             });
         }
         CommentCommands::List { task } => {
-            let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let comments = ops::comment::list(pool, t.id).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let comments = ops::comment::list(&mut conn, t.id).await?;
             output::print_list(&comments, json, |c| {
                 println!("[{}] {}", c.created_at, c.body);
             });

@@ -1,6 +1,6 @@
 use clap::{Args, Subcommand};
 use color_eyre::eyre::Result;
-use ranger::db::SqlitePool;
+use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::models::{State, Task};
 use ranger::ops;
 
@@ -18,14 +18,14 @@ pub struct PositionArgs {
 }
 
 impl PositionArgs {
-    async fn resolve(self, pool: &SqlitePool) -> Result<(Option<i64>, Option<i64>)> {
+    async fn resolve(self, conn: &mut SqliteConnection) -> Result<(Option<i64>, Option<i64>)> {
         let before_id = if let Some(k) = &self.before {
-            Some(ops::task::get_by_key_prefix(pool, k).await?.id)
+            Some(ops::task::get_by_key_prefix(conn, k).await?.id)
         } else {
             None
         };
         let after_id = if let Some(k) = &self.after {
-            Some(ops::task::get_by_key_prefix(pool, k).await?.id)
+            Some(ops::task::get_by_key_prefix(conn, k).await?.id)
         } else {
             None
         };
@@ -36,7 +36,6 @@ impl PositionArgs {
 #[derive(Subcommand)]
 pub enum TaskCommands {
     /// Create a new task
-    #[command(visible_alias = "new")]
     Create {
         /// Task title
         title: String,
@@ -59,7 +58,6 @@ pub enum TaskCommands {
         position: PositionArgs,
     },
     /// List tasks
-    #[command(visible_alias = "ls")]
     List {
         /// Filter by backlog key or prefix
         #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
@@ -88,7 +86,6 @@ pub enum TaskCommands {
         state: Option<String>,
     },
     /// Move a task's position within a backlog
-    #[command(visible_alias = "mv")]
     Move {
         /// Task key or prefix
         key: String,
@@ -115,7 +112,6 @@ pub enum TaskCommands {
         backlog: String,
     },
     /// Delete a task entirely
-    #[command(visible_alias = "rm")]
     Delete {
         /// Task key or prefix
         key: String,
@@ -123,6 +119,8 @@ pub enum TaskCommands {
 }
 
 pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+
     match command {
         TaskCommands::Create {
             title,
@@ -133,17 +131,21 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             tag,
             position,
         } => {
-            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
+            let bl = ops::backlog::get_by_name(&mut conn, &backlog).await?;
             let parent_id = if let Some(parent_key) = &parent {
-                Some(ops::task::get_by_key_prefix(pool, parent_key).await?.id)
+                Some(
+                    ops::task::get_by_key_prefix(&mut conn, parent_key)
+                        .await?
+                        .id,
+                )
             } else {
                 None
             };
-            let (before_id, after_id) = position.resolve(pool).await?;
+            let (before_id, after_id) = position.resolve(&mut conn).await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             let task = ops::task::create(
-                pool,
+                &mut conn,
                 ops::task::CreateTask {
                     title: &title,
                     backlog_id: bl.id,
@@ -158,8 +160,8 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
 
             if let Some(tags) = &tag {
                 for tag_name in tags.split(',').map(str::trim) {
-                    let t = ops::tag::get_or_create(pool, tag_name).await?;
-                    ops::tag::add_to_task(pool, task.id, t.id).await?;
+                    let t = ops::tag::get_or_create(&mut conn, tag_name).await?;
+                    ops::tag::add_to_task(&mut conn, task.id, t.id).await?;
                 }
             }
 
@@ -169,15 +171,15 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             if let Some(backlog_key) = &backlog {
-                let bl = ops::backlog::get_by_name(pool, backlog_key).await?;
-                let tasks = ops::task::list(pool, bl.id, state).await?;
+                let bl = ops::backlog::get_by_name(&mut conn, backlog_key).await?;
+                let tasks = ops::task::list(&mut conn, bl.id, state).await?;
                 output::print_list(&tasks, json, print_task);
             } else {
                 // List all tasks (no backlog filter)
-                let backlogs = ops::backlog::list(pool).await?;
+                let backlogs = ops::backlog::list(&mut conn).await?;
                 let mut all_tasks = Vec::new();
                 for bl in &backlogs {
-                    let tasks = ops::task::list(pool, bl.id, state.clone()).await?;
+                    let tasks = ops::task::list(&mut conn, bl.id, state.clone()).await?;
                     for t in tasks {
                         if !all_tasks.iter().any(|at: &Task| at.id == t.id) {
                             all_tasks.push(t);
@@ -188,10 +190,10 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             }
         }
         TaskCommands::Show { key } => {
-            let task = ops::task::get_by_key_prefix(pool, &key).await?;
-            let comments = ops::comment::list(pool, task.id).await?;
-            let tags = ops::tag::list_for_task(pool, task.id).await?;
-            let blockers = ops::blocker::list_for_task(pool, task.id).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let comments = ops::comment::list(&mut conn, task.id).await?;
+            let tags = ops::tag::list_for_task(&mut conn, task.id).await?;
+            let blockers = ops::blocker::list_for_task(&mut conn, task.id).await?;
 
             if json {
                 let detail = serde_json::json!({
@@ -210,7 +212,8 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 if !blockers.is_empty() {
                     println!("Blocked by:");
                     for b in &blockers {
-                        if let Ok(bt) = ops::task::get_by_id(pool, b.blocked_by_task_id).await {
+                        if let Ok(bt) = ops::task::get_by_id(&mut conn, b.blocked_by_task_id).await
+                        {
                             println!("  {} {}", &bt.key[..8], bt.title);
                         }
                     }
@@ -232,9 +235,9 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         } => {
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
-            let task = ops::task::get_by_key_prefix(pool, &key).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
             let updated = ops::task::edit(
-                pool,
+                &mut conn,
                 task.id,
                 title.as_deref(),
                 description.as_deref(),
@@ -248,28 +251,28 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             backlog,
             position,
         } => {
-            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
-            let task = ops::task::get_by_key_prefix(pool, &key).await?;
-            let (before_id, after_id) = position.resolve(pool).await?;
+            let bl = ops::backlog::get_by_name(&mut conn, &backlog).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let (before_id, after_id) = position.resolve(&mut conn).await?;
 
-            ops::task::move_task(pool, task.id, bl.id, before_id, after_id).await?;
+            ops::task::move_task(&mut conn, task.id, bl.id, before_id, after_id).await?;
             println!("Moved {} {}", &task.key[..8], task.title);
         }
         TaskCommands::Add { task, backlog } => {
-            let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
-            ops::task::add_to_backlog(pool, t.id, bl.id).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let bl = ops::backlog::get_by_name(&mut conn, &backlog).await?;
+            ops::task::add_to_backlog(&mut conn, t.id, bl.id).await?;
             println!("Added {} to {}", &t.key[..8], bl.name);
         }
         TaskCommands::Remove { task, backlog } => {
-            let t = ops::task::get_by_key_prefix(pool, &task).await?;
-            let bl = ops::backlog::get_by_name(pool, &backlog).await?;
-            ops::task::remove_from_backlog(pool, t.id, bl.id).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let bl = ops::backlog::get_by_name(&mut conn, &backlog).await?;
+            ops::task::remove_from_backlog(&mut conn, t.id, bl.id).await?;
             println!("Removed {} from {}", &t.key[..8], bl.name);
         }
         TaskCommands::Delete { key } => {
-            let task = ops::task::get_by_key_prefix(pool, &key).await?;
-            ops::task::delete(pool, task.id).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            ops::task::delete(&mut conn, task.id).await?;
             println!("Deleted {} {}", &task.key[..8], task.title);
         }
     }
