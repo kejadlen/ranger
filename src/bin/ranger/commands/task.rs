@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
 use clap::{Args, Subcommand};
 use color_eyre::eyre::{Result, bail};
 use ranger::db::{SqliteConnection, SqlitePool};
+use ranger::key;
 use ranger::models::{State, Task};
 use ranger::ops;
 use ranger::ops::task::Placement;
@@ -177,16 +180,22 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
 
             tx.commit().await?;
 
-            output::print(&task, json, print_task);
+            let mut conn = pool.acquire().await?;
+            let all_keys = ops::task::all_keys(&mut conn).await?;
+            let prefixes = key::unique_prefix_lengths(&all_keys);
+            output::print(&task, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::List { backlog, state } => {
             let mut conn = pool.acquire().await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
+            let all_keys = ops::task::all_keys(&mut conn).await?;
+            let prefixes = key::unique_prefix_lengths(&all_keys);
+
             if let Some(backlog_name) = &backlog {
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
                 let tasks = ops::task::list(&mut conn, bl.id, state).await?;
-                output::print_list(&tasks, json, print_task);
+                output::print_list(&tasks, json, |t| print_task(t, &prefixes));
             } else {
                 // List all tasks (no backlog filter)
                 let backlogs = ops::backlog::list(&mut conn).await?;
@@ -199,7 +208,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                         }
                     }
                 }
-                output::print_list(&all_tasks, json, print_task);
+                output::print_list(&all_tasks, json, |t| print_task(t, &prefixes));
             }
         }
         TaskCommands::Show { key } => {
@@ -218,7 +227,10 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                print_task_detail(&task);
+                let all_keys = ops::task::all_keys(&mut conn).await?;
+                let prefixes = key::unique_prefix_lengths(&all_keys);
+
+                print_task_detail(&task, &prefixes);
                 if !tags.is_empty() {
                     let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
                     println!("Tags:    {}", tag_names.join(", "));
@@ -228,7 +240,11 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                     for b in &blockers {
                         if let Ok(bt) = ops::task::get_by_id(&mut conn, b.blocked_by_task_id).await
                         {
-                            println!("  {} {}", &bt.key[..8], bt.title);
+                            println!(
+                                "  {} {}",
+                                output::format_key_from_map(&bt.key, &prefixes),
+                                bt.title
+                            );
                         }
                     }
                 }
@@ -266,7 +282,9 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 ops::task::move_task(&mut conn, &updated, anchors.as_placement()).await?;
             }
 
-            output::print(&updated, json, print_task);
+            let all_keys = ops::task::all_keys(&mut conn).await?;
+            let prefixes = key::unique_prefix_lengths(&all_keys);
+            output::print(&updated, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::Move { key, position } => {
             let mut conn = pool.acquire().await?;
@@ -276,7 +294,13 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             match anchors {
                 Some(anchors) => {
                     ops::task::move_task(&mut conn, &task, anchors.as_placement()).await?;
-                    println!("Moved {} {}", &task.key[..8], task.title);
+                    let all_keys = ops::task::all_keys(&mut conn).await?;
+                    let prefixes = key::unique_prefix_lengths(&all_keys);
+                    println!(
+                        "Moved {} {}",
+                        output::format_key_from_map(&task.key, &prefixes),
+                        task.title
+                    );
                 }
                 None => bail!("--before or --after is required"),
             }
@@ -284,19 +308,30 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         TaskCommands::Delete { key } => {
             let mut conn = pool.acquire().await?;
             let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let all_keys = ops::task::all_keys(&mut conn).await?;
+            let prefixes = key::unique_prefix_lengths(&all_keys);
             ops::task::delete(&mut conn, task.id).await?;
-            println!("Deleted {} {}", &task.key[..8], task.title);
+            println!(
+                "Deleted {} {}",
+                output::format_key_from_map(&task.key, &prefixes),
+                task.title
+            );
         }
     }
     Ok(())
 }
 
-fn print_task(t: &Task) {
-    println!("{} [{}] {}", &t.key[..8], t.state, t.title);
+fn print_task(t: &Task, prefixes: &HashMap<String, usize>) {
+    println!(
+        "{} [{}] {}",
+        output::format_key_from_map(&t.key, prefixes),
+        t.state,
+        t.title
+    );
 }
 
-fn print_task_detail(t: &Task) {
-    println!("Key:     {}", t.key);
+fn print_task_detail(t: &Task, prefixes: &HashMap<String, usize>) {
+    println!("Key:     {}", output::format_key_from_map(&t.key, prefixes));
     println!("Title:   {}", t.title);
     println!("State:   {}", t.state);
     if let Some(desc) = &t.description {

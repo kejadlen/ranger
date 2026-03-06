@@ -83,6 +83,14 @@ pub async fn list(
     Ok(tasks)
 }
 
+/// Fetch all task keys in the database. Used to compute shortest unique prefixes.
+pub async fn all_keys(conn: &mut SqliteConnection) -> Result<Vec<String>, RangerError> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT key FROM tasks")
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows.into_iter().map(|(k,)| k).collect())
+}
+
 pub async fn get_by_id(conn: &mut SqliteConnection, id: i64) -> Result<Task, RangerError> {
     let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?");
     let task = sqlx::query_as::<_, Task>(&query)

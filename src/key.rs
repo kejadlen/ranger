@@ -18,6 +18,28 @@ pub fn generate_key() -> String {
         .collect()
 }
 
+/// Returns the minimum prefix length needed to uniquely identify `key` among `all_keys`.
+/// The minimum returned value is 1 (even if the set has only one key).
+pub fn shortest_unique_prefix_len(key: &str, all_keys: &[String]) -> usize {
+    let mut len = 1;
+    while len < key.len() {
+        let prefix = &key[..len];
+        let count = all_keys.iter().filter(|k| k.starts_with(prefix)).count();
+        if count <= 1 {
+            return len;
+        }
+        len += 1;
+    }
+    unreachable!("all keys are the same length") // cov-excl-line
+}
+
+/// Builds a map from key → shortest unique prefix length for all keys in the set.
+pub fn unique_prefix_lengths(keys: &[String]) -> std::collections::HashMap<String, usize> {
+    keys.iter()
+        .map(|k| (k.clone(), shortest_unique_prefix_len(k, keys)))
+        .collect()
+}
+
 pub fn resolve_prefix(prefix: &str, keys: &[String]) -> Result<String, RangerError> {
     let matches: Vec<&String> = keys.iter().filter(|k| k.starts_with(prefix)).collect();
     match matches.len() {
@@ -53,6 +75,46 @@ mod tests {
         let keys: Vec<String> = (0..100).map(|_| generate_key()).collect();
         let unique: std::collections::HashSet<&String> = keys.iter().collect();
         assert_eq!(keys.len(), unique.len());
+    }
+
+    #[test]
+    fn shortest_unique_prefix_single_key() {
+        let keys = vec!["romoqtuw".to_string()];
+        assert_eq!(shortest_unique_prefix_len("romoqtuw", &keys), 1);
+    }
+
+    #[test]
+    fn shortest_unique_prefix_diverges_at_second_char() {
+        let keys = vec!["romoqtuw".to_string(), "rypqxnkl".to_string()];
+        // Both start with 'r', diverge at char 2
+        assert_eq!(shortest_unique_prefix_len("romoqtuw", &keys), 2);
+        assert_eq!(shortest_unique_prefix_len("rypqxnkl", &keys), 2);
+    }
+
+    #[test]
+    fn shortest_unique_prefix_longer_shared() {
+        let keys = vec![
+            "romoqtuw".to_string(),
+            "romxnklp".to_string(),
+            "rypqxnkl".to_string(),
+        ];
+        // "romo" vs "romx" need 4 chars, "ry" needs 2
+        assert_eq!(shortest_unique_prefix_len("romoqtuw", &keys), 4);
+        assert_eq!(shortest_unique_prefix_len("romxnklp", &keys), 4);
+        assert_eq!(shortest_unique_prefix_len("rypqxnkl", &keys), 2);
+    }
+
+    #[test]
+    fn unique_prefix_lengths_builds_map() {
+        let keys = vec![
+            "romoqtuw".to_string(),
+            "rypqxnkl".to_string(),
+            "slmnopqr".to_string(),
+        ];
+        let map = unique_prefix_lengths(&keys);
+        assert_eq!(map["romoqtuw"], 2);
+        assert_eq!(map["rypqxnkl"], 2);
+        assert_eq!(map["slmnopqr"], 1);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use clap::Subcommand;
 use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
+use ranger::key;
 use ranger::models::{Backlog, State};
 use ranger::ops;
 
@@ -67,6 +68,9 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
+                let all_keys = ops::task::all_keys(&mut conn).await?;
+                let prefixes = key::unique_prefix_lengths(&all_keys);
+
                 print_backlog_detail(&backlog);
 
                 for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
@@ -74,7 +78,11 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                     if !tasks.is_empty() {
                         println!("\n[{}]", state);
                         for t in &tasks {
-                            println!("  {} {}", &t.key[..8], t.title);
+                            println!(
+                                "  {} {}",
+                                output::format_key_from_map(&t.key, &prefixes),
+                                t.title
+                            );
                         }
                     }
                 }
