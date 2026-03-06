@@ -22,4 +22,5 @@ xdg = "*"
 
 [dev-dependencies]
 assert_cmd = "*"
+predicates = "3.1.4"
 tempfile = "*"

@@ -24,6 +24,12 @@ pub enum BacklogCommands {
         #[arg(env = "RANGER_DEFAULT_BACKLOG")]
         name: String,
     },
+    /// Rebalance task positions in a backlog
+    Rebalance {
+        /// Backlog name
+        #[arg(env = "RANGER_DEFAULT_BACKLOG")]
+        name: String,
+    },
 }
 
 pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Result<()> {
@@ -37,6 +43,11 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
         BacklogCommands::List => {
             let backlogs = ops::backlog::list(&mut conn).await?;
             output::print_list(&backlogs, json, print_backlog);
+        }
+        BacklogCommands::Rebalance { name } => {
+            let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;
+            let count = ops::task::rebalance(&mut conn, backlog.id).await?;
+            println!("Rebalanced {count} tasks in {name}");
         }
         BacklogCommands::Show { name } => {
             let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;

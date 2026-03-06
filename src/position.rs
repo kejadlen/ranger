@@ -46,6 +46,24 @@ pub fn between(a: &str, b: &str) -> String {
     unreachable!("between exhausted without finding a midpoint") // cov-excl-line
 }
 
+/// Generate `n` well-spaced position strings via recursive bisection.
+pub fn spread(n: usize) -> Vec<String> {
+    let mut out = Vec::with_capacity(n);
+    fill("", "", n, &mut out);
+    out
+}
+
+fn fill(lo: &str, hi: &str, n: usize, out: &mut Vec<String>) {
+    if n == 0 {
+        return;
+    }
+    let mid = n / 2;
+    let pos = between(lo, hi);
+    fill(lo, &pos, mid, out);
+    out.push(pos.clone());
+    fill(&pos, hi, n - mid - 1, out);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +135,33 @@ mod tests {
             assert!(mid > *a);
             assert!(mid < *b);
             positions.insert(positions.len() - 1, mid);
+        }
+    }
+
+    #[test]
+    fn spread_empty() {
+        assert!(spread(0).is_empty());
+    }
+
+    #[test]
+    fn spread_one() {
+        let positions = spread(1);
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0], "m");
+    }
+
+    #[test]
+    fn spread_produces_sorted_positions() {
+        for n in [2, 3, 5, 10, 50, 100] {
+            let positions = spread(n);
+            assert_eq!(positions.len(), n);
+            for window in positions.windows(2) {
+                assert!(
+                    window[0] < window[1],
+                    "not sorted at n={n}: {:?}",
+                    positions
+                );
+            }
         }
     }
 }

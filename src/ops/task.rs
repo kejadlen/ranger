@@ -375,6 +375,17 @@ async fn set_position(
     Ok(())
 }
 
+pub async fn rebalance(conn: &mut SqliteConnection, backlog_id: i64) -> Result<usize, RangerError> {
+    let tasks = list(&mut *conn, backlog_id, None).await?;
+    let positions = position::spread(tasks.len());
+
+    for (task, pos) in tasks.iter().zip(&positions) {
+        set_position(&mut *conn, task.id, pos).await?;
+    }
+
+    Ok(tasks.len())
+}
+
 pub async fn delete(conn: &mut SqliteConnection, task_id: i64) -> Result<(), RangerError> {
     sqlx::query("DELETE FROM tasks WHERE id = ?")
         .bind(task_id)
@@ -1124,5 +1135,63 @@ mod tests {
         let icebox = list(&mut conn, bl.id, Some(State::Icebox)).await.unwrap();
         assert_eq!(icebox.len(), 1);
         assert_eq!(icebox[0].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn rebalance_reassigns_positions() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        // Create tasks — repeated appends make positions drift toward "z"
+        for title in ["A", "B", "C"] {
+            create(
+                &mut conn,
+                CreateTask {
+                    title,
+                    backlog_id: bl.id,
+                    state: None,
+                    parent_id: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let before: Vec<String> = list(&mut conn, bl.id, None)
+            .await
+            .unwrap()
+            .iter()
+            .map(|t| t.position.clone())
+            .collect();
+
+        let count = rebalance(&mut conn, bl.id).await.unwrap();
+        assert_eq!(count, 3);
+
+        let after = list(&mut conn, bl.id, None).await.unwrap();
+        let after_positions: Vec<String> = after.iter().map(|t| t.position.clone()).collect();
+
+        // Order preserved
+        assert_eq!(
+            after.iter().map(|t| &t.title).collect::<Vec<_>>(),
+            vec!["A", "B", "C"]
+        );
+        // Positions changed
+        assert_ne!(before, after_positions);
+        // Still sorted
+        for w in after_positions.windows(2) {
+            assert!(w[0] < w[1]);
+        }
+    }
+
+    #[tokio::test]
+    async fn rebalance_empty_backlog() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let count = rebalance(&mut conn, bl.id).await.unwrap();
+        assert_eq!(count, 0);
     }
 }

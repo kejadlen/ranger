@@ -198,4 +198,29 @@ fn full_workflow() {
     assert!(output.status.success());
     let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(tasks.as_array().unwrap().len(), 3);
+
+    // Rebalance
+    ranger(db_path)
+        .args(["backlog", "rebalance"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Rebalanced"));
+
+    // Verify ordering preserved after rebalance
+    let output = ranger(db_path)
+        .args(["task", "list", "--json"])
+        .output()
+        .unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let titles: Vec<&str> = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["title"].as_str().unwrap())
+        .collect();
+    // Fourth (edited) was moved before Third — ordering should survive rebalance
+    assert!(
+        titles.iter().position(|t| t.contains("Fourth")).unwrap()
+            < titles.iter().position(|t| *t == "Third task").unwrap()
+    );
 }
