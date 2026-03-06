@@ -17,85 +17,11 @@ ranger --help                     # CLI usage (installed binary)
 
 ## Project Management
 
-Use the `ranger` CLI to manage tasks for this project. The database lives at the default XDG path (`~/.local/share/ranger/ranger.db`).
-
-### Setup (first time only)
-
-```bash
-ranger backlog create "ranger"
-```
+Use the `ranger` skill for task management workflow. The backlog for this project is `ranger`. Set `RANGER_DEFAULT_BACKLOG=ranger` to skip `--backlog` on every command.
 
 > **Note:** Always use the installed `ranger` binary for PM tasks, not `cargo run`. The repo may be in a non-compiling state during development. Install with `cargo install --path . --locked`.
 
-Set `RANGER_DEFAULT_BACKLOG=ranger` to skip `--backlog` on every command.
-
-### Workflow
-
-All work must correspond to a task in the backlog. If the user asks for something that isn't tracked, create a task for it first, then pick it up.
-
-Before starting work, check the backlog:
-
-```bash
-ranger backlog show <name>
-```
-
-When the user says "let's keep working" or similar without specifying a task, pick up the next queued task (top of the queue).
-
-When picking up a task:
-
-```bash
-ranger task edit <key> --state in_progress
-```
-
 **Use a jj workspace** (see `jj-workspaces` skill) for all feature work unless the change is exceedingly simple (e.g., a one-line config tweak or AGENTS.md update). Name workspaces `<key-prefix>-<short-descriptor>` (e.g., `voxv-position-args`).
-
-While working, add comments only for decisions, blockers, or scope changes that the commit message won't capture:
-
-```bash
-ranger comment add <key> "Decided to use X because Y"
-```
-
-When done, commit first, then mark the task:
-
-```bash
-jj commit -m "description of the change"
-ranger task edit <key> --state done
-```
-
-To add new work:
-
-```bash
-ranger task create "Title" --backlog <name>                    # icebox by default
-ranger task create "Title" --backlog <name> --state queued     # committed work
-ranger task create "Subtask" --backlog <name> --parent <key>   # subtask
-```
-
-### Prioritization
-
-When adding queued tasks, consider where they belong relative to existing work. New tasks land at the bottom by default — reposition them if they're higher priority:
-
-```bash
-ranger backlog show <name>                                     # see current order
-ranger task move <key> --before <key>                          # place before a task
-ranger task move <key> --after <key>                           # place after a task
-```
-
-Top of the queue = most important. Only move tasks within the queued state — don't reposition done, in_progress, or icebox tasks. Ask the user where a task should go if priority isn't obvious. Don't just append everything to the bottom — a backlog that isn't ordered isn't useful.
-
-**Bias toward quick wins**: Small, easy tasks should be prioritized higher by default — even if they're just nice-to-haves. A 5-minute fix that improves quality of life is worth doing before a multi-hour feature. When suggesting priority, bump quick wins up rather than defaulting them to the bottom.
-
-Use `--json` on any command when you need structured output.
-
-### Working in the Open
-
-Use the `working-in-the-open` skill when working on ranger tasks. Use `ranger comment add` instead of GitHub issue comments — but only when there's context the commit message doesn't capture. Most work needs no comment.
-
-### Conventions
-
-- **Icebox**: ideas, not committed to
-- **Queued**: committed, ordered by priority (top = most important)
-- **In Progress**: actively being worked on
-- **Done**: finished
 
 ## Architecture
 
