@@ -108,19 +108,6 @@ pub struct Comment {
     pub created_at: Timestamp,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct Tag {
-    pub id: i64,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct Blocker {
-    pub id: i64,
-    pub task_id: i64,
-    pub blocked_by_task_id: i64,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

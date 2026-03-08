@@ -41,7 +41,7 @@ fn full_workflow() {
     assert!(output.status.success());
 
     let output = ranger(db_path)
-        .args(["task", "create", "Second task", "--tag", "urgent"])
+        .args(["task", "create", "Second task"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -86,19 +86,6 @@ fn full_workflow() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Started working on this"));
 
-    // Add a blocker
-    let output = ranger(db_path)
-        .args(["blocker", "add", &t2_key[..4], &t1_key[..4]])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-
-    // List tags
-    let output = ranger(db_path).args(["tag", "list"]).output().unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("urgent"));
-
     // Show task (JSON) — verify all data present
     let output = ranger(db_path)
         .args(["task", "show", &t2_key[..4], "--json"])
@@ -107,8 +94,6 @@ fn full_workflow() {
     assert!(output.status.success());
     let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(detail["task"]["title"], "Second task");
-    assert_eq!(detail["tags"][0]["name"], "urgent");
-    assert_eq!(detail["blockers"].as_array().unwrap().len(), 1);
 
     // Create two queued tasks and use edit --before to reposition within the same state
     let output = ranger(db_path)

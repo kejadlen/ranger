@@ -77,9 +77,6 @@ pub enum TaskCommands {
         /// Parent task key or prefix (makes this a subtask)
         #[arg(long)]
         parent: Option<String>,
-        /// Tags to add (comma-separated)
-        #[arg(long)]
-        tag: Option<String>,
         #[command(flatten)]
         position: PositionArgs,
     },
@@ -141,7 +138,6 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             description,
             state,
             parent,
-            tag,
             position,
         } => {
             let mut tx = pool.begin().await?;
@@ -169,13 +165,6 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
 
             if let Some(ref anchors) = anchors {
                 ops::task::move_task(&mut tx, &task, anchors.as_placement()).await?;
-            }
-
-            if let Some(tags) = &tag {
-                for tag_name in tags.split(',').map(str::trim) {
-                    let t = ops::tag::get_or_create(&mut tx, tag_name).await?;
-                    ops::tag::add_to_task(&mut tx, task.id, t.id).await?;
-                }
             }
 
             tx.commit().await?;
@@ -215,15 +204,11 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let mut conn = pool.acquire().await?;
             let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
             let comments = ops::comment::list(&mut conn, task.id).await?;
-            let tags = ops::tag::list_for_task(&mut conn, task.id).await?;
-            let blockers = ops::blocker::list_for_task(&mut conn, task.id).await?;
 
             if json {
                 let detail = serde_json::json!({
                     "task": task,
                     "comments": comments,
-                    "tags": tags,
-                    "blockers": blockers,
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
@@ -231,23 +216,6 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 let prefixes = key::unique_prefix_lengths(&all_keys);
 
                 print_task_detail(&task, &prefixes);
-                if !tags.is_empty() {
-                    let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
-                    println!("Tags:    {}", tag_names.join(", "));
-                }
-                if !blockers.is_empty() {
-                    println!("Blocked by:");
-                    for b in &blockers {
-                        if let Ok(bt) = ops::task::get_by_id(&mut conn, b.blocked_by_task_id).await
-                        {
-                            println!(
-                                "  {} {}",
-                                output::format_key_from_map(&bt.key, &prefixes),
-                                bt.title
-                            );
-                        }
-                    }
-                }
                 if !comments.is_empty() {
                     println!();
                     for c in &comments {
