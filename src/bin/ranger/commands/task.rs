@@ -178,15 +178,16 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let mut conn = pool.acquire().await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
-            let all_keys = ops::task::all_keys(&mut conn).await?;
-            let prefixes = key::unique_prefix_lengths(&all_keys);
-
             if let Some(backlog_name) = &backlog {
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
+                let backlog_keys = ops::task::keys_for_backlog(&mut conn, bl.id).await?;
+                let prefixes = key::unique_prefix_lengths(&backlog_keys);
                 let tasks = ops::task::list(&mut conn, bl.id, state).await?;
                 output::print_list(&tasks, json, |t| print_task(t, &prefixes));
             } else {
                 // List all tasks (no backlog filter)
+                let all_keys = ops::task::all_keys(&mut conn).await?;
+                let prefixes = key::unique_prefix_lengths(&all_keys);
                 let backlogs = ops::backlog::list(&mut conn).await?;
                 let mut all_tasks = Vec::new();
                 for bl in &backlogs {

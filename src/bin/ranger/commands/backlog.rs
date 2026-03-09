@@ -68,8 +68,8 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let all_keys = ops::task::all_keys(&mut conn).await?;
-                let prefixes = key::unique_prefix_lengths(&all_keys);
+                let backlog_keys = ops::task::keys_for_backlog(&mut conn, backlog.id).await?;
+                let prefixes = key::unique_prefix_lengths(&backlog_keys);
 
                 print_backlog_detail(&backlog);
 

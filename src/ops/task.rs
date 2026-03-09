@@ -91,6 +91,17 @@ pub async fn all_keys(conn: &mut SqliteConnection) -> Result<Vec<String>, Ranger
     Ok(rows.into_iter().map(|(k,)| k).collect())
 }
 
+pub async fn keys_for_backlog(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+) -> Result<Vec<String>, RangerError> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT key FROM tasks WHERE backlog_id = ?")
+        .bind(backlog_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows.into_iter().map(|(k,)| k).collect())
+}
+
 pub async fn get_by_id(conn: &mut SqliteConnection, id: i64) -> Result<Task, RangerError> {
     let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?");
     let task = sqlx::query_as::<_, Task>(&query)
@@ -1201,5 +1212,48 @@ mod tests {
 
         let count = rebalance(&mut conn, bl.id).await.unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn keys_for_backlog_scoped_to_backlog() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl1 = backlog::create(&mut conn, "Alpha").await.unwrap();
+        let bl2 = backlog::create(&mut conn, "Beta").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Task in Alpha",
+                backlog_id: bl1.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Task in Beta",
+                backlog_id: bl2.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let alpha_keys = keys_for_backlog(&mut conn, bl1.id).await.unwrap();
+        assert_eq!(alpha_keys, vec![t1.key.clone()]);
+
+        let beta_keys = keys_for_backlog(&mut conn, bl2.id).await.unwrap();
+        assert_eq!(beta_keys, vec![t2.key.clone()]);
+
+        let global_keys = all_keys(&mut conn).await.unwrap();
+        assert_eq!(global_keys.len(), 2);
     }
 }
