@@ -250,4 +250,27 @@ fn full_workflow() {
         .unwrap();
     let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(tasks.as_array().unwrap().len(), 3);
+
+    // No-args with RANGER_DEFAULT_BACKLOG shows the default backlog
+    let output = ranger(db_path).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Ranger"));
+    // Should show task state sections
+    assert!(stdout.contains("[in_progress]") || stdout.contains("[queued]") || stdout.contains("[icebox]"));
+
+    // No-args with JSON flag
+    let output = ranger(db_path).args(["--json"]).output().unwrap();
+    assert!(output.status.success());
+    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(detail["backlog"]["name"], "Ranger");
+
+    // No-args without RANGER_DEFAULT_BACKLOG lists all backlogs
+    let mut cmd = Command::from(cargo_bin_cmd!("ranger"));
+    cmd.env("RANGER_DB", db_path);
+    cmd.env_remove("RANGER_DEFAULT_BACKLOG");
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Ranger"));
 }

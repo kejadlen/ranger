@@ -16,7 +16,7 @@ struct Cli {
     db: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -62,14 +62,30 @@ async fn main() -> color_eyre::Result<()> {
     let pool = ranger::db::connect(&db_path).await?;
 
     match cli.command {
-        Commands::Backlog { command } => {
+        Some(Commands::Backlog { command }) => {
             commands::backlog::run(&pool, command, cli.json).await?;
         }
-        Commands::Task { command } => {
+        Some(Commands::Task { command }) => {
             commands::task::run(&pool, command, cli.json).await?;
         }
-        Commands::Comment { command } => {
+        Some(Commands::Comment { command }) => {
             commands::comment::run(&pool, command, cli.json).await?;
+        }
+        None => {
+            // No subcommand: show the default backlog
+            let backlog_name = std::env::var("RANGER_DEFAULT_BACKLOG").ok();
+            match backlog_name {
+                Some(name) => {
+                    let show_cmd =
+                        commands::backlog::BacklogCommands::Show { name };
+                    commands::backlog::run(&pool, show_cmd, cli.json).await?;
+                }
+                None => {
+                    // No default backlog set — list all backlogs
+                    let list_cmd = commands::backlog::BacklogCommands::List;
+                    commands::backlog::run(&pool, list_cmd, cli.json).await?;
+                }
+            }
         }
     }
 
