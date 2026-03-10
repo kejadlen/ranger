@@ -76,8 +76,7 @@ async fn main() -> color_eyre::Result<()> {
             let backlog_name = std::env::var("RANGER_DEFAULT_BACKLOG").ok();
             match backlog_name {
                 Some(name) => {
-                    let show_cmd =
-                        commands::backlog::BacklogCommands::Show { name };
+                    let show_cmd = commands::backlog::BacklogCommands::Show { name };
                     commands::backlog::run(&pool, show_cmd, cli.json).await?;
                 }
                 None => {

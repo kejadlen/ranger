@@ -257,7 +257,11 @@ fn full_workflow() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Ranger"));
     // Should show task state sections
-    assert!(stdout.contains("[in_progress]") || stdout.contains("[queued]") || stdout.contains("[icebox]"));
+    assert!(
+        stdout.contains("[in_progress]")
+            || stdout.contains("[queued]")
+            || stdout.contains("[icebox]")
+    );
 
     // No-args with JSON flag
     let output = ranger(db_path).args(["--json"]).output().unwrap();

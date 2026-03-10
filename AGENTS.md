@@ -86,8 +86,9 @@ jj workspace update-stale
 # 3. Rebase workspace commits after the last described commit on main's line
 jj rebase -s <first-workspace-commit> -A 'latest(trunk()..default@ ~ description(exact:""))'
 
-# 4. Clean up
+# 4. Clean up — forget drops the workspace, then abandon its leftover empty WC
 jj workspace forget <name>
+jj abandon 'empty() & description(exact:"") & @-'
 rm -rf work/<name>
 ```
 
