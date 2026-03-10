@@ -124,13 +124,23 @@ pub async fn get_by_id(conn: &mut SqliteConnection, id: i64) -> Result<Task, Ran
 pub async fn get_by_key_prefix(
     conn: &mut SqliteConnection,
     prefix: &str,
+    backlog_id: Option<i64>,
 ) -> Result<Task, RangerError> {
     let pattern = format!("{prefix}%");
-    let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE key LIKE ?");
-    let matches = sqlx::query_as::<_, Task>(&query)
-        .bind(&pattern)
-        .fetch_all(&mut *conn)
-        .await?;
+    let matches = if let Some(bid) = backlog_id {
+        let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE key LIKE ? AND backlog_id = ?");
+        sqlx::query_as::<_, Task>(&query)
+            .bind(&pattern)
+            .bind(bid)
+            .fetch_all(&mut *conn)
+            .await?
+    } else {
+        let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE key LIKE ?");
+        sqlx::query_as::<_, Task>(&query)
+            .bind(&pattern)
+            .fetch_all(&mut *conn)
+            .await?
+    };
 
     match matches.len() {
         0 => Err(RangerError::KeyNotFound(prefix.to_string())),
@@ -613,7 +623,9 @@ mod tests {
         .await
         .unwrap();
 
-        let found = get_by_key_prefix(&mut conn, &task.key[..3]).await.unwrap();
+        let found = get_by_key_prefix(&mut conn, &task.key[..3], None)
+            .await
+            .unwrap();
         assert_eq!(found.id, task.id);
     }
 
@@ -670,7 +682,7 @@ mod tests {
 
         delete(&mut conn, task.id).await.unwrap();
 
-        let result = get_by_key_prefix(&mut conn, &task.key).await;
+        let result = get_by_key_prefix(&mut conn, &task.key, None).await;
         assert!(result.is_err());
 
         let tasks = list(&mut conn, bl.id, &ListFilter::default())
@@ -720,8 +732,43 @@ mod tests {
             .await
             .unwrap();
 
-        let result = get_by_key_prefix(&mut conn, "kkkk").await;
+        let result = get_by_key_prefix(&mut conn, "kkkk", None).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_by_key_prefix_scoped_to_backlog() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl1 = backlog::create(&mut conn, "Alpha").await.unwrap();
+        let bl2 = backlog::create(&mut conn, "Beta").await.unwrap();
+
+        // Two tasks with the same key prefix in different backlogs
+        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES ('kkkkaaaa', ?, 'In Alpha', 'icebox', 'a')")
+            .bind(bl1.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES ('kkkkbbbb', ?, 'In Beta', 'icebox', 'a')")
+            .bind(bl2.id)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+
+        // Globally ambiguous
+        let result = get_by_key_prefix(&mut conn, "kkkk", None).await;
+        assert!(result.is_err());
+
+        // Scoped to each backlog resolves uniquely
+        let t1 = get_by_key_prefix(&mut conn, "kkkk", Some(bl1.id))
+            .await
+            .unwrap();
+        assert_eq!(t1.title, "In Alpha");
+
+        let t2 = get_by_key_prefix(&mut conn, "kkkk", Some(bl2.id))
+            .await
+            .unwrap();
+        assert_eq!(t2.title, "In Beta");
     }
 
     #[tokio::test]
