@@ -96,6 +96,7 @@ pub struct Task {
     pub description: Option<String>,
     pub state: State,
     pub position: String,
+    pub archived: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

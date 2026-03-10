@@ -4,6 +4,7 @@ use ranger::db::SqlitePool;
 use ranger::key;
 use ranger::models::{Backlog, State};
 use ranger::ops;
+use ranger::ops::task::ListFilter;
 
 use crate::output;
 
@@ -56,7 +57,11 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
             if json {
                 let mut state_groups = serde_json::Map::new();
                 for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
-                    let tasks = ops::task::list(&mut conn, backlog.id, Some(state.clone())).await?;
+                    let filter = ListFilter {
+                        state: Some(state.clone()),
+                        ..Default::default()
+                    };
+                    let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
                     if !tasks.is_empty() {
                         state_groups
                             .insert(state.to_string(), serde_json::to_value(&tasks).unwrap());
@@ -74,7 +79,11 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                 print_backlog_detail(&backlog);
 
                 for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
-                    let tasks = ops::task::list(&mut conn, backlog.id, Some(state.clone())).await?;
+                    let filter = ListFilter {
+                        state: Some(state.clone()),
+                        ..Default::default()
+                    };
+                    let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
                     if !tasks.is_empty() {
                         println!("\n[{}]", state);
                         for t in &tasks {

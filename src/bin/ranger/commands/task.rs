@@ -6,7 +6,7 @@ use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::key;
 use ranger::models::{State, Task};
 use ranger::ops;
-use ranger::ops::task::Placement;
+use ranger::ops::task::{ListFilter, Placement};
 
 use crate::output;
 
@@ -89,6 +89,9 @@ pub enum TaskCommands {
         /// Filter by state
         #[arg(long)]
         state: Option<String>,
+        /// Include archived tasks
+        #[arg(long)]
+        archived: bool,
     },
     /// Show task details
     #[command(visible_alias = "s")]
@@ -125,6 +128,18 @@ pub enum TaskCommands {
     /// Delete a task entirely
     #[command(visible_alias = "del")]
     Delete {
+        /// Task key or prefix
+        key: String,
+    },
+
+    /// Archive a task
+    Archive {
+        /// Task key or prefix
+        key: String,
+    },
+
+    /// Unarchive a task
+    Unarchive {
         /// Task key or prefix
         key: String,
     },
@@ -174,15 +189,22 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let prefixes = key::unique_prefix_lengths(&all_keys);
             output::print(&task, json, |t| print_task(t, &prefixes));
         }
-        TaskCommands::List { backlog, state } => {
+        TaskCommands::List {
+            backlog,
+            state,
+            archived,
+        } => {
             let mut conn = pool.acquire().await?;
-            let state = state.map(|s| s.parse::<State>()).transpose()?;
+            let filter = ListFilter {
+                state: state.map(|s| s.parse::<State>()).transpose()?,
+                include_archived: archived,
+            };
 
             if let Some(backlog_name) = &backlog {
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
                 let backlog_keys = ops::task::keys_for_backlog(&mut conn, bl.id).await?;
                 let prefixes = key::unique_prefix_lengths(&backlog_keys);
-                let tasks = ops::task::list(&mut conn, bl.id, state).await?;
+                let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
                 output::print_list(&tasks, json, |t| print_task(t, &prefixes));
             } else {
                 // List all tasks (no backlog filter)
@@ -191,7 +213,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 let backlogs = ops::backlog::list(&mut conn).await?;
                 let mut all_tasks = Vec::new();
                 for bl in &backlogs {
-                    let tasks = ops::task::list(&mut conn, bl.id, state.clone()).await?;
+                    let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
                     for t in tasks {
                         if !all_tasks.iter().any(|at: &Task| at.id == t.id) {
                             all_tasks.push(t);
@@ -286,6 +308,34 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 task.title
             );
         }
+        TaskCommands::Archive { key } => {
+            let mut conn = pool.acquire().await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let updated = ops::task::set_archived(&mut conn, task.id, true).await?;
+            let all_keys = ops::task::all_keys(&mut conn).await?;
+            let prefixes = key::unique_prefix_lengths(&all_keys);
+            output::print(&updated, json, |t| {
+                println!(
+                    "Archived {} {}",
+                    output::format_key_from_map(&t.key, &prefixes),
+                    t.title
+                );
+            });
+        }
+        TaskCommands::Unarchive { key } => {
+            let mut conn = pool.acquire().await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let updated = ops::task::set_archived(&mut conn, task.id, false).await?;
+            let all_keys = ops::task::all_keys(&mut conn).await?;
+            let prefixes = key::unique_prefix_lengths(&all_keys);
+            output::print(&updated, json, |t| {
+                println!(
+                    "Unarchived {} {}",
+                    output::format_key_from_map(&t.key, &prefixes),
+                    t.title
+                );
+            });
+        }
     }
     Ok(())
 }
@@ -303,6 +353,9 @@ fn print_task_detail(t: &Task, prefixes: &HashMap<String, usize>) {
     println!("Key:     {}", output::format_key_from_map(&t.key, prefixes));
     println!("Title:   {}", t.title);
     println!("State:   {}", t.state);
+    if t.archived {
+        println!("Archived: yes");
+    }
     if let Some(desc) = &t.description {
         println!("Desc:    {}", desc);
     }

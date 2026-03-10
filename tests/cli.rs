@@ -208,4 +208,46 @@ fn full_workflow() {
         titles.iter().position(|t| t.contains("Fourth")).unwrap()
             < titles.iter().position(|t| *t == "Third task").unwrap()
     );
+
+    // Archive a task
+    let output = ranger(db_path)
+        .args(["task", "archive", &t1_key[..4]])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Archived"));
+
+    // Archived task hidden from default list
+    let output = ranger(db_path)
+        .args(["task", "list", "--json"])
+        .output()
+        .unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(tasks.as_array().unwrap().len(), 2);
+
+    // Visible with --archived
+    let output = ranger(db_path)
+        .args(["task", "list", "--json", "--archived"])
+        .output()
+        .unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(tasks.as_array().unwrap().len(), 3);
+
+    // Unarchive
+    let output = ranger(db_path)
+        .args(["task", "unarchive", &t1_key[..4]])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Unarchived"));
+
+    // Back in default list
+    let output = ranger(db_path)
+        .args(["task", "list", "--json"])
+        .output()
+        .unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(tasks.as_array().unwrap().len(), 3);
 }

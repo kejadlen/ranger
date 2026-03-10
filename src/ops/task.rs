@@ -4,8 +4,7 @@ use crate::models::{State, Task};
 use crate::position;
 use sqlx::sqlite::SqliteConnection;
 
-const TASK_COLUMNS: &str =
-    "id, key, backlog_id, parent_id, title, description, state, position, created_at, updated_at";
+const TASK_COLUMNS: &str = "id, key, backlog_id, parent_id, title, description, state, position, archived, created_at, updated_at";
 
 pub struct CreateTask<'a> {
     pub title: &'a str,
@@ -53,15 +52,26 @@ pub async fn create(
     Ok(task)
 }
 
+#[derive(Default)]
+pub struct ListFilter {
+    pub state: Option<State>,
+    pub include_archived: bool,
+}
+
 pub async fn list(
     conn: &mut SqliteConnection,
     backlog_id: i64,
-    state_filter: Option<State>,
+    filter: &ListFilter,
 ) -> Result<Vec<Task>, RangerError> {
-    let tasks = if let Some(state) = state_filter {
+    let archived_clause = if filter.include_archived {
+        ""
+    } else {
+        " AND archived = 0"
+    };
+    let tasks = if let Some(state) = &filter.state {
         let query = format!(
             "SELECT {TASK_COLUMNS} FROM tasks \
-             WHERE backlog_id = ? AND state = ? \
+             WHERE backlog_id = ? AND state = ?{archived_clause} \
              ORDER BY position"
         );
         sqlx::query_as::<_, Task>(&query)
@@ -72,7 +82,7 @@ pub async fn list(
     } else {
         let query = format!(
             "SELECT {TASK_COLUMNS} FROM tasks \
-             WHERE backlog_id = ? \
+             WHERE backlog_id = ?{archived_clause} \
              ORDER BY position"
         );
         sqlx::query_as::<_, Task>(&query)
@@ -170,6 +180,23 @@ pub async fn edit(
 
     let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?");
     let task = sqlx::query_as::<_, Task>(&query)
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(task)
+}
+
+pub async fn set_archived(
+    conn: &mut SqliteConnection,
+    task_id: i64,
+    archived: bool,
+) -> Result<Task, RangerError> {
+    let query = format!(
+        "UPDATE tasks SET archived = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') \
+         WHERE id = ? RETURNING {TASK_COLUMNS}"
+    );
+    let task = sqlx::query_as::<_, Task>(&query)
+        .bind(archived)
         .bind(task_id)
         .fetch_one(&mut *conn)
         .await?;
@@ -395,7 +422,15 @@ async fn set_position(
 }
 
 pub async fn rebalance(conn: &mut SqliteConnection, backlog_id: i64) -> Result<usize, RangerError> {
-    let tasks = list(&mut *conn, backlog_id, None).await?;
+    let tasks = list(
+        &mut *conn,
+        backlog_id,
+        &ListFilter {
+            include_archived: true,
+            ..Default::default()
+        },
+    )
+    .await?;
     let positions = position::spread(tasks.len());
 
     for (task, pos) in tasks.iter().zip(&positions) {
@@ -494,7 +529,9 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 3);
         assert_eq!(tasks[0].id, t1.id);
         assert_eq!(tasks[1].id, t2.id);
@@ -531,11 +568,29 @@ mod tests {
         .await
         .unwrap();
 
-        let icebox = list(&mut conn, bl.id, Some(State::Icebox)).await.unwrap();
+        let icebox = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Icebox),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(icebox.len(), 1);
         assert_eq!(icebox[0].title, "Icebox task");
 
-        let queued = list(&mut conn, bl.id, Some(State::Queued)).await.unwrap();
+        let queued = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Queued),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].title, "Queued task");
     }
@@ -618,7 +673,9 @@ mod tests {
         let result = get_by_key_prefix(&mut conn, &task.key).await;
         assert!(result.is_err());
 
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 0);
     }
 
@@ -727,7 +784,9 @@ mod tests {
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
         assert_eq!(tasks[0].id, t2.id);
         assert_eq!(tasks[1].id, t1.id);
     }
@@ -778,7 +837,9 @@ mod tests {
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
         assert_eq!(tasks[0].id, t3.id);
         assert_eq!(tasks[1].id, t1.id);
         assert_eq!(tasks[2].id, t2.id);
@@ -830,7 +891,9 @@ mod tests {
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
         assert_eq!(tasks[0].id, t2.id);
         assert_eq!(tasks[1].id, t3.id);
         assert_eq!(tasks[2].id, t1.id);
@@ -889,7 +952,9 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&mut conn, bl.id, None).await.unwrap();
+        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
         assert_eq!(tasks[0].id, t1.id);
         assert_eq!(tasks[1].id, t3.id);
         assert_eq!(tasks[2].id, t2.id);
@@ -982,7 +1047,16 @@ mod tests {
             .unwrap();
         assert_eq!(updated.state, State::Done);
 
-        let done = list(&mut conn, bl.id, Some(State::Done)).await.unwrap();
+        let done = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Done),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(done.len(), 3);
         assert_eq!(done[0].id, d1.id);
         assert_eq!(done[1].id, d2.id);
@@ -1042,7 +1116,16 @@ mod tests {
             .unwrap();
         assert_eq!(updated.state, State::Queued);
 
-        let queued = list(&mut conn, bl.id, Some(State::Queued)).await.unwrap();
+        let queued = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Queued),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(queued.len(), 3);
         assert_eq!(
             queued[0].id, ip.id,
@@ -1091,7 +1174,16 @@ mod tests {
             .unwrap();
         assert_eq!(updated.position, original_pos);
 
-        let queued = list(&mut conn, bl.id, Some(State::Queued)).await.unwrap();
+        let queued = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Queued),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(queued[0].id, t1.id);
         assert_eq!(queued[1].id, t2.id);
     }
@@ -1121,7 +1213,16 @@ mod tests {
             .unwrap();
         assert_eq!(updated.state, State::Done);
 
-        let done = list(&mut conn, bl.id, Some(State::Done)).await.unwrap();
+        let done = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Done),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(done.len(), 1);
         assert_eq!(done[0].id, t1.id);
     }
@@ -1151,7 +1252,16 @@ mod tests {
             .unwrap();
         assert_eq!(updated.state, State::Icebox);
 
-        let icebox = list(&mut conn, bl.id, Some(State::Icebox)).await.unwrap();
+        let icebox = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Icebox),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(icebox.len(), 1);
         assert_eq!(icebox[0].id, t1.id);
     }
@@ -1178,7 +1288,7 @@ mod tests {
             .unwrap();
         }
 
-        let before: Vec<String> = list(&mut conn, bl.id, None)
+        let before: Vec<String> = list(&mut conn, bl.id, &ListFilter::default())
             .await
             .unwrap()
             .iter()
@@ -1188,7 +1298,9 @@ mod tests {
         let count = rebalance(&mut conn, bl.id).await.unwrap();
         assert_eq!(count, 3);
 
-        let after = list(&mut conn, bl.id, None).await.unwrap();
+        let after = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
         let after_positions: Vec<String> = after.iter().map(|t| t.position.clone()).collect();
 
         // Order preserved
@@ -1255,5 +1367,70 @@ mod tests {
 
         let global_keys = all_keys(&mut conn).await.unwrap();
         assert_eq!(global_keys.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn set_archived_and_filter() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Keep",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Archive me",
+                backlog_id: bl.id,
+                state: None,
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Archive t2
+        let archived = set_archived(&mut conn, t2.id, true).await.unwrap();
+        assert!(archived.archived);
+
+        // Default list excludes archived
+        let visible = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].key, t1.key);
+
+        // include_archived shows all
+        let all = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                include_archived: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Unarchive
+        let restored = set_archived(&mut conn, t2.id, false).await.unwrap();
+        assert!(!restored.archived);
+
+        let visible = list(&mut conn, bl.id, &ListFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(visible.len(), 2);
     }
 }
