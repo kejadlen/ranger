@@ -3,6 +3,7 @@ mod output;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[derive(Parser)]
 #[command(name = "ranger", about = "Personal task tracker")]
@@ -53,8 +54,9 @@ fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
         .init();
 
     let cli = Cli::parse();
