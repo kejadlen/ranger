@@ -9,6 +9,12 @@ pub enum RangerError {
         task_state: String,
         anchor_state: String,
     },
+    #[error("can't mark parent task done: {count} subtask(s) still incomplete")]
+    IncompleteSubtasks { count: usize },
+    #[error("can't move parent task before its subtask")]
+    ParentBeforeChild,
+    #[error("can't move subtask after its parent")]
+    ChildAfterParent,
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("migration error: {0}")]
