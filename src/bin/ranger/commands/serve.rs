@@ -53,7 +53,8 @@ async fn index(State(state): State<AppState>) -> Html<String> {
 }
 
 struct TaskView {
-    short_key: String,
+    key_prefix: String,
+    key_rest: String,
     title: String,
     description: Option<String>,
     has_subtasks: bool,
@@ -140,7 +141,7 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> String
     } else {
         if !in_progress.is_empty() {
             html.push_str(
-                r#"<div class="section-label section-label-in-progress">In Progress</div>"#,
+                r#"<div class="section-label section-label-in-progress"><span class="dot">●</span> In Progress</div>"#,
             );
             html.push_str(r#"<div class="state-in-progress">"#);
             for task in in_progress {
@@ -150,7 +151,7 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> String
         }
 
         if !queued.is_empty() {
-            html.push_str(r#"<div class="section-label section-label-queued">Queued</div>"#);
+            html.push_str(r#"<div class="section-label section-label-queued"><span class="dot">●</span> Queued</div>"#);
             html.push_str(r#"<div class="state-queued">"#);
             for task in queued {
                 html.push_str(&render_task(task));
@@ -210,8 +211,9 @@ fn render_task(task: &TaskView) -> String {
     html.push_str(r#"<div class="task">"#);
     html.push_str(r#"<div class="task-header">"#);
     html.push_str(&format!(
-        r#"<span class="key">{}</span>"#,
-        html_escape(&task.short_key)
+        r#"<span class="key"><span class="key-prefix">{}</span><span class="key-rest">{}</span></span>"#,
+        html_escape(&task.key_prefix),
+        html_escape(&task.key_rest)
     ));
     html.push_str(&format!(
         r#"<span class="title">{}</span>"#,
@@ -239,16 +241,9 @@ async fn to_task_views(
     let mut views = Vec::with_capacity(tasks.len());
     for task in tasks {
         let prefix_len = prefixes.get(&task.key).copied().unwrap_or(8);
-        let short_key = task.key[..8.min(task.key.len())].to_string();
-        let short_key = format!(
-            "{}{}",
-            &short_key[..prefix_len.min(short_key.len())],
-            if prefix_len < short_key.len() {
-                &short_key[prefix_len..]
-            } else {
-                ""
-            }
-        );
+        let display_len = 8.min(task.key.len());
+        let key_prefix = task.key[..prefix_len.min(display_len)].to_string();
+        let key_rest = task.key[prefix_len.min(display_len)..display_len].to_string();
 
         // Check for subtasks
         let subtasks: Vec<Task> = sqlx::query_as(
@@ -267,7 +262,8 @@ async fn to_task_views(
             .count();
 
         views.push(TaskView {
-            short_key,
+            key_prefix,
+            key_rest,
             title: task.title.clone(),
             description: task.description.clone(),
             has_subtasks,

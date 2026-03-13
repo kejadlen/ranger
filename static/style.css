@@ -155,6 +155,10 @@ header .counts {
   margin-top: 0;
 }
 
+.section-label .dot {
+  margin-right: 4px;
+}
+
 .section-label-in-progress { color: var(--color-in-progress); }
 .section-label-queued      { color: var(--color-queued); }
 .section-label-done        { color: var(--color-done); }
@@ -179,8 +183,17 @@ header .counts {
 .task .key {
   font-family: var(--font-mono);
   font-size: var(--step-mono);
-  color: var(--color-accent);
   flex-shrink: 0;
+}
+
+.task .key-prefix {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.task .key-rest {
+  color: var(--color-text-muted);
+  font-weight: 400;
 }
 
 .task .title {
@@ -214,6 +227,11 @@ header .counts {
 /* Done tasks are slightly desaturated */
 .state-done .task {
   opacity: 0.75;
+}
+
+/* Icebox tasks slightly faded */
+.state-icebox .task {
+  opacity: 0.8;
 }
 
 
