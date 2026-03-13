@@ -184,8 +184,8 @@ fn render_task(task: &TaskView) -> Markup {
     let has_details = task.description.is_some() || task.has_subtasks;
     html! {
         @if has_details {
-            details.task tabindex="0" {
-                summary.task-header {
+            details.task {
+                summary.task-header tabindex="0" {
                     span.key {
                         span.key-prefix { (task.key_prefix) }
                         span.key-rest { (task.key_rest) }
@@ -237,29 +237,30 @@ fn keyboard_nav_script() -> Markup {
         script {
             (PreEscaped(r#"
             (function() {
-                function getTasks() {
-                    return Array.from(document.querySelectorAll('.task'));
+                function getFocusables() {
+                    return Array.from(document.querySelectorAll(
+                        'details.task > summary, div.task'
+                    ));
                 }
-                function focusTask(tasks, idx) {
-                    if (idx >= 0 && idx < tasks.length) {
-                        tasks[idx].focus();
-                        tasks[idx].scrollIntoView({ block: 'nearest' });
+                function focusEl(els, idx) {
+                    if (idx >= 0 && idx < els.length) {
+                        els[idx].focus();
+                        els[idx].scrollIntoView({ block: 'nearest' });
                     }
                 }
                 document.addEventListener('keydown', function(e) {
                     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-                    var tasks = getTasks();
-                    var current = tasks.indexOf(document.activeElement);
+                    var els = getFocusables();
+                    var current = els.indexOf(document.activeElement);
                     if (e.key === 'j' || e.key === 'ArrowDown') {
                         e.preventDefault();
-                        focusTask(tasks, current < 0 ? 0 : current + 1);
+                        focusEl(els, current < 0 ? 0 : current + 1);
                     } else if (e.key === 'k' || e.key === 'ArrowUp') {
                         e.preventDefault();
-                        focusTask(tasks, current < 0 ? 0 : current - 1);
-                    } else if ((e.key === 'Enter' || e.key === ' ') && document.activeElement.tagName === 'DETAILS') {
+                        focusEl(els, current < 0 ? 0 : current - 1);
+                    } else if ((e.key === 'Enter' || e.key === ' ') && document.activeElement.tagName === 'SUMMARY') {
                         e.preventDefault();
-                        var details = document.activeElement;
-                        details.open = !details.open;
+                        document.activeElement.click();
                     }
                 });
             })();
