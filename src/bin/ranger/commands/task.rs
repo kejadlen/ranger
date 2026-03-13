@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use clap::{Args, Subcommand};
+use clap_complete::engine::ArgValueCompleter;
 use color_eyre::eyre::{Result, bail};
 use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::key;
@@ -8,16 +9,17 @@ use ranger::models::{State, Task};
 use ranger::ops;
 use ranger::ops::task::{ListFilter, Placement};
 
+use crate::completions;
 use crate::output;
 
 /// Positioning flags shared by create, edit, and move.
 #[derive(Args)]
 pub struct PositionArgs {
     /// Place before this task key
-    #[arg(long, short = 'B')]
+    #[arg(long, short = 'B', add = ArgValueCompleter::new(completions::complete_task_keys))]
     before: Option<String>,
     /// Place after this task key
-    #[arg(long, short = 'A')]
+    #[arg(long, short = 'A', add = ArgValueCompleter::new(completions::complete_task_keys))]
     after: Option<String>,
 }
 
@@ -70,7 +72,7 @@ pub enum TaskCommands {
         /// Task title
         title: String,
         /// Backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
         backlog: String,
         /// Task description
         #[arg(long)]
@@ -79,7 +81,7 @@ pub enum TaskCommands {
         #[arg(long)]
         state: Option<String>,
         /// Parent task key or prefix (makes this a subtask)
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_task_keys))]
         parent: Option<String>,
         #[command(flatten)]
         position: PositionArgs,
@@ -88,7 +90,7 @@ pub enum TaskCommands {
     #[command(visible_alias = "ls")]
     List {
         /// Filter by backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
         backlog: Option<String>,
         /// Filter by state
         #[arg(long)]
@@ -104,12 +106,14 @@ pub enum TaskCommands {
     #[command(visible_alias = "s")]
     Show {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
     },
     /// Edit a task
     #[command(visible_alias = "e")]
     Edit {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
         /// New title
         #[arg(long)]
@@ -127,6 +131,7 @@ pub enum TaskCommands {
     #[command(visible_alias = "mv")]
     Move {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
         #[command(flatten)]
         position: PositionArgs,
@@ -136,18 +141,21 @@ pub enum TaskCommands {
     #[command(visible_alias = "del")]
     Delete {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
     },
 
     /// Archive a task
     Archive {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
     },
 
     /// Unarchive a task
     Unarchive {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
     },
 }

@@ -1,8 +1,9 @@
 mod commands;
+mod completions;
 mod output;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use clap_complete::Shell;
+use clap_complete::engine::ArgValueCompleter;
 use std::path::PathBuf;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -47,18 +48,13 @@ enum Commands {
         #[command(subcommand)]
         command: commands::tag::TagCommands,
     },
-    /// Generate shell completions
-    Completions {
-        /// Shell to generate completions for
-        shell: Shell,
-    },
     /// Start the web server
     Serve {
         /// Port to listen on
         #[arg(long, default_value_t = 3000)]
         port: u16,
         /// Backlog to display
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
         backlog: String,
     },
 }
@@ -72,23 +68,26 @@ fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
         .expect("failed to create data directory")
 }
 
-#[tokio::main]
-async fn main() -> color_eyre::Result<()> {
+fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(EnvFilter::from_default_env())
         .init();
 
+    // Handle dynamic completions before entering the tokio runtime.
+    // Completers create their own single-threaded runtime to query the DB,
+    // which would panic if nested inside #[tokio::main].
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> color_eyre::Result<()> {
     let cli = Cli::parse();
-
-    // Handle completions before DB connection — no database needed
-    if let Some(Commands::Completions { shell }) = &cli.command {
-        let mut cmd = Cli::command();
-        clap_complete::generate(*shell, &mut cmd, "ranger", &mut std::io::stdout());
-        return Ok(());
-    }
-
     let db_path = resolve_db_path(cli.db);
     let pool = ranger::db::connect(&db_path).await?;
 
@@ -105,7 +104,6 @@ async fn main() -> color_eyre::Result<()> {
         Some(Commands::Tag { command }) => {
             commands::tag::run(&pool, command, cli.json).await?;
         }
-        Some(Commands::Completions { .. }) => unreachable!(),
         Some(Commands::Serve { port, backlog }) => {
             commands::serve::run(&pool, port, backlog).await?;
         }

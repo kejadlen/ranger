@@ -421,14 +421,41 @@ fn full_workflow() {
     assert!(!stdout.contains("bug"));
     assert!(stdout.contains("frontend"));
 
-    // Shell completions (no DB needed, but pass one anyway for the helper)
+    // Dynamic shell completions via COMPLETE env var
     for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
-        let output = ranger(db_path)
-            .args(["completions", shell])
-            .output()
-            .unwrap();
+        let output = ranger(db_path).env("COMPLETE", shell).output().unwrap();
         assert!(output.status.success(), "completions failed for {shell}");
         let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(!stdout.is_empty(), "completions empty for {shell}");
+        assert!(
+            !stdout.is_empty(),
+            "completions registration empty for {shell}"
+        );
     }
+
+    // Dynamic completion of task keys
+    let output = ranger(db_path)
+        .env("COMPLETE", "fish")
+        .args(["--", "ranger", "task", "show", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "task key completion failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    // Should include task keys with help text showing [state] and title
+    assert!(
+        stdout.contains("First task"),
+        "task key completions should include task titles as help text, got: {stdout}"
+    );
+
+    // Dynamic completion of backlog names
+    let output = ranger(db_path)
+        .env("COMPLETE", "fish")
+        .args(["--", "ranger", "backlog", "show", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "backlog name completion failed");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("Ranger"),
+        "backlog name completions should include backlog names"
+    );
 }

@@ -1,4 +1,5 @@
 use clap::Subcommand;
+use clap_complete::engine::ArgValueCompleter;
 use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::key;
@@ -6,6 +7,7 @@ use ranger::models::{Backlog, State};
 use ranger::ops;
 use ranger::ops::task::ListFilter;
 
+use crate::completions;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -23,7 +25,7 @@ pub enum BacklogCommands {
     #[command(visible_alias = "s")]
     Show {
         /// Backlog name
-        #[arg(env = "RANGER_DEFAULT_BACKLOG")]
+        #[arg(env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
         name: String,
 
         /// Show only done tasks
@@ -33,7 +35,7 @@ pub enum BacklogCommands {
     /// Rebalance task positions in a backlog
     Rebalance {
         /// Backlog name
-        #[arg(env = "RANGER_DEFAULT_BACKLOG")]
+        #[arg(env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
         name: String,
     },
 }

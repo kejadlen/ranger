@@ -1,8 +1,10 @@
 use clap::Subcommand;
+use clap_complete::engine::ArgValueCompleter;
 use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
 use ranger::ops;
 
+use crate::completions;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -11,6 +13,7 @@ pub enum CommentCommands {
     #[command(visible_alias = "a")]
     Add {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         task: String,
         /// Comment body
         body: String,
@@ -19,6 +22,7 @@ pub enum CommentCommands {
     #[command(visible_alias = "ls")]
     List {
         /// Task key or prefix
+        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         task: String,
     },
 }
