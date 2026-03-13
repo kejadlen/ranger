@@ -54,3 +54,7 @@ all: fmt clippy coverage
 # Install ranger from source
 install:
     cargo install --locked --path .
+
+# Start dev server with auto-reload on changes
+serve:
+    fd -e rs -e css -e toml | entr -r cargo run -- serve --backlog {{env("RANGER_DEFAULT_BACKLOG", "ranger")}}
