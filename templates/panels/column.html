@@ -1,0 +1,17 @@
+{% for column in columns %}
+<div class="panel">
+  <div class="panel-header">
+    <h2>{{ column.label }}</h2>
+    <span class="count">{{ column.tasks | length }}</span>
+  </div>
+  {% if column.tasks | length == 0 %}
+    <div class="empty">No {{ column.label | lower }} tasks</div>
+  {% else %}
+    <div class="{{ column.state_class }}">
+      {% for task in column.tasks %}
+        {% include "task.html" %}
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+{% endfor %}

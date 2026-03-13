@@ -6,23 +6,51 @@ use ranger::key;
 use ranger::models::Task;
 use ranger::ops;
 use ranger::ops::task::ListFilter;
+use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tera::{Context, Tera};
 use tokio::net::TcpListener;
 
 /// Static CSS embedded at compile time from `static/style.css`.
 const STYLE_CSS: &str = include_str!("../../../../static/style.css");
 
+/// Raw template strings embedded at compile time.
+const TEMPLATES: &[(&str, &str)] = &[
+    ("base.html", include_str!("../../../../templates/base.html")),
+    (
+        "board.html",
+        include_str!("../../../../templates/board.html"),
+    ),
+    (
+        "panels/backlog.html",
+        include_str!("../../../../templates/panels/backlog.html"),
+    ),
+    (
+        "panels/column.html",
+        include_str!("../../../../templates/panels/column.html"),
+    ),
+    ("task.html", include_str!("../../../../templates/task.html")),
+];
+
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
     backlog_name: String,
+    tera: Arc<Tera>,
 }
 
 pub async fn run(pool: &SqlitePool, port: u16, backlog_name: String) -> color_eyre::Result<()> {
+    let mut tera = Tera::default();
+    for &(name, content) in TEMPLATES {
+        tera.add_raw_template(name, content)?;
+    }
+
     let state = AppState {
         pool: pool.clone(),
         backlog_name,
+        tera: Arc::new(tera),
     };
 
     let app = Router::new()
@@ -52,6 +80,7 @@ async fn index(State(state): State<AppState>) -> Html<String> {
     }
 }
 
+#[derive(Serialize)]
 struct TaskView {
     key_prefix: String,
     key_rest: String,
@@ -60,6 +89,13 @@ struct TaskView {
     has_subtasks: bool,
     subtask_count: usize,
     done_subtask_count: usize,
+}
+
+#[derive(Serialize)]
+struct ColumnView {
+    label: String,
+    state_class: String,
+    tasks: Vec<TaskView>,
 }
 
 async fn render_board(state: &AppState) -> color_eyre::Result<String> {
@@ -96,141 +132,28 @@ async fn render_board(state: &AppState) -> color_eyre::Result<String> {
     let total = in_progress.len() + queued.len() + icebox.len() + done.len();
     let active = in_progress.len() + queued.len();
 
-    let backlog_panel = render_backlog_panel(&in_progress, &queued);
-    let icebox_panel = render_column_panel("icebox", &icebox);
-    let done_panel = render_column_panel("done", &done);
+    let columns = vec![
+        ColumnView {
+            label: "Icebox".to_string(),
+            state_class: "state-icebox".to_string(),
+            tasks: icebox,
+        },
+        ColumnView {
+            label: "Done".to_string(),
+            state_class: "state-done".to_string(),
+            tasks: done,
+        },
+    ];
 
-    Ok(format!(
-        r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ranger › {backlog_name}</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header>
-  <h1>ranger<span class="sep">›</span>{backlog_name}</h1>
-  <div class="counts">{active} active · {total} total</div>
-</header>
-<div class="board">
-  {backlog_panel}
-  {icebox_panel}
-  {done_panel}
-</div>
-</body>
-</html>"##,
-        backlog_name = html_escape(&state.backlog_name),
-    ))
-}
+    let mut context = Context::new();
+    context.insert("backlog_name", &state.backlog_name);
+    context.insert("active", &active);
+    context.insert("total", &total);
+    context.insert("in_progress", &in_progress);
+    context.insert("queued", &queued);
+    context.insert("columns", &columns);
 
-fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> String {
-    let count = in_progress.len() + queued.len();
-    let mut html = String::new();
-    html.push_str(&format!(
-        r#"<div class="panel">
-  <div class="panel-header">
-    <h2>Backlog</h2>
-    <span class="count">{count}</span>
-  </div>"#
-    ));
-
-    if in_progress.is_empty() && queued.is_empty() {
-        html.push_str(r#"<div class="empty">No active tasks</div>"#);
-    } else {
-        if !in_progress.is_empty() {
-            html.push_str(
-                r#"<div class="section-label section-label-in-progress"><span class="dot">●</span> In Progress</div>"#,
-            );
-            html.push_str(r#"<div class="state-in-progress">"#);
-            for task in in_progress {
-                html.push_str(&render_task(task));
-            }
-            html.push_str("</div>");
-        }
-
-        if !queued.is_empty() {
-            html.push_str(r#"<div class="section-label section-label-queued"><span class="dot">●</span> Queued</div>"#);
-            html.push_str(r#"<div class="state-queued">"#);
-            for task in queued {
-                html.push_str(&render_task(task));
-            }
-            html.push_str("</div>");
-        }
-    }
-
-    html.push_str("</div>");
-    html
-}
-
-fn render_column_panel(name: &str, tasks: &[TaskView]) -> String {
-    let label = match name {
-        "icebox" => "Icebox",
-        "done" => "Done",
-        _ => name,
-    };
-    let state_class = match name {
-        "done" => "state-done",
-        "icebox" => "state-icebox",
-        _ => "",
-    };
-    let count = tasks.len();
-    let mut html = String::new();
-    html.push_str(&format!(
-        r#"<div class="panel">
-  <div class="panel-header">
-    <h2>{label}</h2>
-    <span class="count">{count}</span>
-  </div>"#
-    ));
-
-    if tasks.is_empty() {
-        html.push_str(&format!(
-            r#"<div class="empty">No {lower} tasks</div>"#,
-            lower = label.to_lowercase()
-        ));
-    } else {
-        if !state_class.is_empty() {
-            html.push_str(&format!(r#"<div class="{state_class}">"#));
-        }
-        for task in tasks {
-            html.push_str(&render_task(task));
-        }
-        if !state_class.is_empty() {
-            html.push_str("</div>");
-        }
-    }
-
-    html.push_str("</div>");
-    html
-}
-
-fn render_task(task: &TaskView) -> String {
-    let mut html = String::new();
-    html.push_str(r#"<div class="task">"#);
-    html.push_str(r#"<div class="task-header">"#);
-    html.push_str(&format!(
-        r#"<span class="key"><span class="key-prefix">{}</span><span class="key-rest">{}</span></span>"#,
-        html_escape(&task.key_prefix),
-        html_escape(&task.key_rest)
-    ));
-    html.push_str(&format!(
-        r#"<span class="title">{}</span>"#,
-        html_escape(&task.title)
-    ));
-    html.push_str("</div>");
-    if let Some(desc) = &task.description {
-        html.push_str(&format!(r#"<div class="desc">{}</div>"#, html_escape(desc)));
-    }
-    if task.has_subtasks {
-        html.push_str(&format!(
-            r#"<div class="subtask-indicator">◆ {}/{} subtasks</div>"#,
-            task.done_subtask_count, task.subtask_count
-        ));
-    }
-    html.push_str("</div>");
-    html
+    Ok(state.tera.render("board.html", &context)?)
 }
 
 async fn to_task_views(
@@ -272,11 +195,4 @@ async fn to_task_views(
         });
     }
     Ok(views)
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }

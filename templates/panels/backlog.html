@@ -1,0 +1,26 @@
+<div class="panel">
+  <div class="panel-header">
+    <h2>Backlog</h2>
+    <span class="count">{{ in_progress | length + queued | length }}</span>
+  </div>
+  {% if in_progress | length == 0 and queued | length == 0 %}
+    <div class="empty">No active tasks</div>
+  {% else %}
+    {% if in_progress | length > 0 %}
+      <div class="section-label section-label-in-progress"><span class="dot">●</span> In Progress</div>
+      <div class="state-in-progress">
+        {% for task in in_progress %}
+          {% include "task.html" %}
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% if queued | length > 0 %}
+      <div class="section-label section-label-queued"><span class="dot">●</span> Queued</div>
+      <div class="state-queued">
+        {% for task in queued %}
+          {% include "task.html" %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endif %}
+</div>

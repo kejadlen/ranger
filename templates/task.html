@@ -1,0 +1,12 @@
+<div class="task">
+  <div class="task-header">
+    <span class="key"><span class="key-prefix">{{ task.key_prefix }}</span><span class="key-rest">{{ task.key_rest }}</span></span>
+    <span class="title">{{ task.title }}</span>
+  </div>
+  {% if task.description %}
+    <div class="desc">{{ task.description }}</div>
+  {% endif %}
+  {% if task.has_subtasks %}
+    <div class="subtask-indicator">◆ {{ task.done_subtask_count }}/{{ task.subtask_count }} subtasks</div>
+  {% endif %}
+</div>

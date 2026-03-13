@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block body %}
+<header>
+  <h1>ranger<span class="sep">›</span>{{ backlog_name }}</h1>
+  <div class="counts">{{ active }} active · {{ total }} total</div>
+</header>
+<div class="board">
+  {% include "panels/backlog.html" %}
+  {% include "panels/column.html" with context %}
+</div>
+{% endblock body %}
