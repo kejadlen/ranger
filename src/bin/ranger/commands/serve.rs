@@ -139,7 +139,9 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> String
         html.push_str(r#"<div class="empty">No active tasks</div>"#);
     } else {
         if !in_progress.is_empty() {
-            html.push_str(r#"<div class="section-label section-label-in-progress">In Progress</div>"#);
+            html.push_str(
+                r#"<div class="section-label section-label-in-progress">In Progress</div>"#,
+            );
             html.push_str(r#"<div class="state-in-progress">"#);
             for task in in_progress {
                 html.push_str(&render_task(task));
@@ -217,10 +219,7 @@ fn render_task(task: &TaskView) -> String {
     ));
     html.push_str("</div>");
     if let Some(desc) = &task.description {
-        html.push_str(&format!(
-            r#"<div class="desc">{}</div>"#,
-            html_escape(desc)
-        ));
+        html.push_str(&format!(r#"<div class="desc">{}</div>"#, html_escape(desc)));
     }
     if task.has_subtasks {
         html.push_str(&format!(

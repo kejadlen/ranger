@@ -1,7 +1,8 @@
 mod commands;
 mod output;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use std::path::PathBuf;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -40,6 +41,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::comment::CommentCommands,
     },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
     /// Start the web server
     Serve {
         /// Port to listen on
@@ -69,6 +75,14 @@ async fn main() -> color_eyre::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Handle completions before DB connection — no database needed
+    if let Some(Commands::Completions { shell }) = &cli.command {
+        let mut cmd = Cli::command();
+        clap_complete::generate(*shell, &mut cmd, "ranger", &mut std::io::stdout());
+        return Ok(());
+    }
+
     let db_path = resolve_db_path(cli.db);
     let pool = ranger::db::connect(&db_path).await?;
 
@@ -82,6 +96,7 @@ async fn main() -> color_eyre::Result<()> {
         Some(Commands::Comment { command }) => {
             commands::comment::run(&pool, command, cli.json).await?;
         }
+        Some(Commands::Completions { .. }) => unreachable!(),
         Some(Commands::Serve { port, backlog }) => {
             commands::serve::run(&pool, port, backlog).await?;
         }

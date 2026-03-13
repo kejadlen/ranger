@@ -277,4 +277,15 @@ fn full_workflow() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Ranger"));
+
+    // Shell completions (no DB needed, but pass one anyway for the helper)
+    for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+        let output = ranger(db_path)
+            .args(["completions", shell])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "completions failed for {shell}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.is_empty(), "completions empty for {shell}");
+    }
 }

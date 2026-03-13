@@ -13,6 +13,7 @@ color-eyre = "*"
 tracing-subscriber = { version = "*", features = ["env-filter"] }
 jiff = { version = "*", features = ["serde"] }
 clap = { version = "*", features = ["derive", "env"] }
+clap_complete = "*"
 rand = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
