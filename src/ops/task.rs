@@ -4,7 +4,7 @@ use crate::models::{State, Task};
 use crate::position;
 use sqlx::sqlite::SqliteConnection;
 
-const TASK_COLUMNS: &str = "id, key, backlog_id, parent_id, title, description, state, position, archived, created_at, updated_at";
+const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.backlog_id, tasks.parent_id, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at";
 
 pub struct CreateTask<'a> {
     pub title: &'a str,
@@ -56,6 +56,7 @@ pub async fn create(
 pub struct ListFilter {
     pub state: Option<State>,
     pub include_archived: bool,
+    pub tag: Option<String>,
 }
 
 pub async fn list(
@@ -68,27 +69,38 @@ pub async fn list(
     } else {
         " AND archived = 0"
     };
+    let tag_join = if filter.tag.is_some() {
+        " JOIN task_tags tt ON tasks.id = tt.task_id \
+         JOIN tags tg ON tt.tag_id = tg.id AND tg.name = ?"
+    } else {
+        ""
+    };
+
     let tasks = if let Some(state) = &filter.state {
         let query = format!(
-            "SELECT {TASK_COLUMNS} FROM tasks \
+            "SELECT {TASK_COLUMNS} FROM tasks{tag_join} \
              WHERE backlog_id = ? AND state = ?{archived_clause} \
              ORDER BY position"
         );
-        sqlx::query_as::<_, Task>(&query)
-            .bind(backlog_id)
+        let mut q = sqlx::query_as::<_, Task>(&query);
+        if let Some(tag) = &filter.tag {
+            q = q.bind(tag);
+        }
+        q.bind(backlog_id)
             .bind(state.as_str())
             .fetch_all(&mut *conn)
             .await?
     } else {
         let query = format!(
-            "SELECT {TASK_COLUMNS} FROM tasks \
+            "SELECT {TASK_COLUMNS} FROM tasks{tag_join} \
              WHERE backlog_id = ?{archived_clause} \
              ORDER BY position"
         );
-        sqlx::query_as::<_, Task>(&query)
-            .bind(backlog_id)
-            .fetch_all(&mut *conn)
-            .await?
+        let mut q = sqlx::query_as::<_, Task>(&query);
+        if let Some(tag) = &filter.tag {
+            q = q.bind(tag);
+        }
+        q.bind(backlog_id).fetch_all(&mut *conn).await?
     };
     Ok(tasks)
 }
@@ -1988,5 +2000,52 @@ mod tests {
         move_task(&mut conn, &child, Placement::Before(&parent))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_tasks_with_tag_and_state_filter() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Tagged queued",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        create(
+            &mut conn,
+            CreateTask {
+                title: "Untagged queued",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                parent_id: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        crate::ops::tag::add(&mut conn, t1.id, "bug").await.unwrap();
+
+        let results = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Queued),
+                tag: Some("bug".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Tagged queued");
     }
 }

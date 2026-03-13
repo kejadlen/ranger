@@ -97,10 +97,21 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                     if !tasks.is_empty() {
                         println!("\n[{}]", state);
                         for t in &tasks {
+                            let tags = ops::tag::list_for_task(&mut conn, t.id).await?;
+                            let tag_str = if tags.is_empty() {
+                                String::new()
+                            } else {
+                                let names: Vec<String> = tags
+                                    .iter()
+                                    .map(|tg| format!("\x1b[36m#{}\x1b[0m", tg.name))
+                                    .collect();
+                                format!(" {}", names.join(" "))
+                            };
                             println!(
-                                "  {} {}",
+                                "  {} {}{}",
                                 output::format_key_from_map(&t.key, &prefixes),
-                                t.title
+                                t.title,
+                                tag_str
                             );
                         }
                     }

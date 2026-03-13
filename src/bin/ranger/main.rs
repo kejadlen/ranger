@@ -41,6 +41,12 @@ enum Commands {
         #[command(subcommand)]
         command: commands::comment::CommentCommands,
     },
+    /// Manage tags
+    #[command(visible_alias = "g")]
+    Tag {
+        #[command(subcommand)]
+        command: commands::tag::TagCommands,
+    },
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -95,6 +101,9 @@ async fn main() -> color_eyre::Result<()> {
         }
         Some(Commands::Comment { command }) => {
             commands::comment::run(&pool, command, cli.json).await?;
+        }
+        Some(Commands::Tag { command }) => {
+            commands::tag::run(&pool, command, cli.json).await?;
         }
         Some(Commands::Completions { .. }) => unreachable!(),
         Some(Commands::Serve { port, backlog }) => {

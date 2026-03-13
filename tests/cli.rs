@@ -341,6 +341,86 @@ fn full_workflow() {
         "JSON should exclude done without --done"
     );
 
+    // --- Tags ---
+
+    // Add a tag to a task
+    let output = ranger(db_path)
+        .args(["tag", "add", &t1_key[..4], "bug"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("bug"));
+
+    // Add another tag
+    ranger(db_path)
+        .args(["tag", "add", &t1_key[..4], "frontend"])
+        .output()
+        .unwrap();
+
+    // Show task includes tags
+    let output = ranger(db_path)
+        .args(["task", "show", &t1_key[..4]])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Tags:"));
+    assert!(stdout.contains("bug"));
+    assert!(stdout.contains("frontend"));
+
+    // Show task JSON includes tags
+    let output = ranger(db_path)
+        .args(["task", "show", &t1_key[..4], "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(detail["tags"].is_array());
+    assert_eq!(detail["tags"].as_array().unwrap().len(), 2);
+
+    // List all tags
+    let output = ranger(db_path).args(["tag", "list"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("bug"));
+    assert!(stdout.contains("frontend"));
+
+    // Filter tasks by tag
+    let output = ranger(db_path)
+        .args(["task", "list", "--tag", "bug"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+    assert!(output.status.success(), "tag filter failed: {stderr}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("First task"));
+
+    // Filter by tag that no task has
+    let output = ranger(db_path)
+        .args(["task", "list", "--tag", "nonexistent"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.is_empty() || !stdout.contains("First task"));
+
+    // Remove a tag
+    let output = ranger(db_path)
+        .args(["tag", "remove", &t1_key[..4], "bug"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Verify tag removed
+    let output = ranger(db_path)
+        .args(["task", "show", &t1_key[..4]])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("bug"));
+    assert!(stdout.contains("frontend"));
+
     // Shell completions (no DB needed, but pass one anyway for the helper)
     for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
         let output = ranger(db_path)

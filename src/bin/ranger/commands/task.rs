@@ -93,6 +93,9 @@ pub enum TaskCommands {
         /// Filter by state
         #[arg(long)]
         state: Option<String>,
+        /// Filter by tag
+        #[arg(long)]
+        tag: Option<String>,
         /// Include archived tasks
         #[arg(long)]
         archived: bool,
@@ -213,12 +216,14 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         TaskCommands::List {
             backlog,
             state,
+            tag,
             archived,
         } => {
             let mut conn = pool.acquire().await?;
             let filter = ListFilter {
                 state: state.map(|s| s.parse::<State>()).transpose()?,
                 include_archived: archived,
+                tag,
             };
 
             if let Some(backlog_name) = &backlog {
@@ -248,11 +253,13 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let mut conn = pool.acquire().await?;
             let task = ops::task::get_by_key_prefix(&mut conn, &key, backlog_scope).await?;
             let comments = ops::comment::list(&mut conn, task.id).await?;
+            let tags = ops::tag::list_for_task(&mut conn, task.id).await?;
 
             if json {
                 let detail = serde_json::json!({
                     "task": task,
                     "comments": comments,
+                    "tags": tags,
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
@@ -260,6 +267,10 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 let prefixes = key::unique_prefix_lengths(&all_keys);
 
                 print_task_detail(&task, &prefixes);
+                if !tags.is_empty() {
+                    let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
+                    println!("Tags:    {}", tag_names.join(", "));
+                }
                 if !comments.is_empty() {
                     println!();
                     for c in &comments {

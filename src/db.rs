@@ -51,9 +51,9 @@ mod tests {
         assert!(table_names.contains(&"backlogs".to_string()));
         assert!(table_names.contains(&"tasks".to_string()));
         assert!(table_names.contains(&"comments".to_string()));
+        assert!(table_names.contains(&"tags".to_string()));
+        assert!(table_names.contains(&"task_tags".to_string()));
         assert!(!table_names.contains(&"blockers".to_string()));
-        assert!(!table_names.contains(&"tags".to_string()));
-        assert!(!table_names.contains(&"task_tags".to_string()));
         assert!(!table_names.contains(&"backlog_tasks".to_string()));
     }
 }
