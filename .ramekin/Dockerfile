@@ -14,6 +14,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && cargo install grcov
 
 
+ENV RANGER_DEFAULT_BACKLOG=ranger
+
 WORKDIR /workspace
 
 ENTRYPOINT ["pi"]
