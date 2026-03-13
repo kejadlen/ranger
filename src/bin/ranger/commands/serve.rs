@@ -2,7 +2,7 @@ use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::{Router, routing::get};
-use maud::{DOCTYPE, Markup, html};
+use maud::{DOCTYPE, Markup, PreEscaped, html};
 use ranger::key;
 use ranger::models::Task;
 use ranger::ops;
@@ -63,6 +63,7 @@ struct TaskView {
     key_rest: String,
     title: String,
     description: Option<String>,
+    tags: Vec<String>,
     has_subtasks: bool,
     subtask_count: usize,
     done_subtask_count: usize,
@@ -122,6 +123,7 @@ async fn render_board(state: &AppState) -> color_eyre::Result<Markup> {
                     (render_column_panel("Icebox", "state-icebox", &icebox))
                     (render_column_panel("Done", "state-done", &done))
                 }
+                (keyboard_nav_script())
             }
         }
     })
@@ -139,9 +141,6 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> Markup
                 div.empty { "No active tasks" }
             } @else {
                 @if !in_progress.is_empty() {
-                    div.section-label.section-label-in-progress {
-                        span.dot { "●" } " In Progress"
-                    }
                     div.state-in-progress {
                         @for task in in_progress {
                             (render_task(task))
@@ -149,9 +148,6 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> Markup
                     }
                 }
                 @if !queued.is_empty() {
-                    div.section-label.section-label-queued {
-                        span.dot { "●" } " Queued"
-                    }
                     div.state-queued {
                         @for task in queued {
                             (render_task(task))
@@ -185,23 +181,89 @@ fn render_column_panel(label: &str, state_class: &str, tasks: &[TaskView]) -> Ma
 }
 
 fn render_task(task: &TaskView) -> Markup {
+    let has_details = task.description.is_some() || task.has_subtasks;
     html! {
-        div.task {
-            div.task-header {
-                span.key {
-                    span.key-prefix { (task.key_prefix) }
-                    span.key-rest { (task.key_rest) }
+        @if has_details {
+            details.task tabindex="0" {
+                summary.task-header {
+                    span.key {
+                        span.key-prefix { (task.key_prefix) }
+                        span.key-rest { (task.key_rest) }
+                    }
+                    span.title { (task.title) }
+                    @if !task.tags.is_empty() {
+                        span.tags {
+                            @for tag in &task.tags {
+                                span.tag { (tag) }
+                            }
+                        }
+                    }
+                    span.expand-icon { "›" }
                 }
-                span.title { (task.title) }
-            }
-            @if let Some(desc) = &task.description {
-                div.desc { (desc) }
-            }
-            @if task.has_subtasks {
-                div.subtask-indicator {
-                    "◆ " (task.done_subtask_count) "/" (task.subtask_count) " subtasks"
+                div.task-body {
+                    @if let Some(desc) = &task.description {
+                        div.desc { (desc) }
+                    }
+                    @if task.has_subtasks {
+                        div.subtask-indicator {
+                            "◆ " (task.done_subtask_count) "/" (task.subtask_count) " subtasks"
+                        }
+                    }
                 }
             }
+        } @else {
+            div.task tabindex="0" {
+                div.task-header {
+                    span.key {
+                        span.key-prefix { (task.key_prefix) }
+                        span.key-rest { (task.key_rest) }
+                    }
+                    span.title { (task.title) }
+                    @if !task.tags.is_empty() {
+                        span.tags {
+                            @for tag in &task.tags {
+                                span.tag { (tag) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn keyboard_nav_script() -> Markup {
+    html! {
+        script {
+            (PreEscaped(r#"
+            (function() {
+                function getTasks() {
+                    return Array.from(document.querySelectorAll('.task'));
+                }
+                function focusTask(tasks, idx) {
+                    if (idx >= 0 && idx < tasks.length) {
+                        tasks[idx].focus();
+                        tasks[idx].scrollIntoView({ block: 'nearest' });
+                    }
+                }
+                document.addEventListener('keydown', function(e) {
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                    var tasks = getTasks();
+                    var current = tasks.indexOf(document.activeElement);
+                    if (e.key === 'j' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        focusTask(tasks, current < 0 ? 0 : current + 1);
+                    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        focusTask(tasks, current < 0 ? 0 : current - 1);
+                    } else if ((e.key === 'Enter' || e.key === ' ') && document.activeElement.tagName === 'DETAILS') {
+                        e.preventDefault();
+                        var details = document.activeElement;
+                        details.open = !details.open;
+                    }
+                });
+            })();
+            "#))
         }
     }
 }
@@ -217,6 +279,13 @@ async fn to_task_views(
         let display_len = 8.min(task.key.len());
         let key_prefix = task.key[..prefix_len.min(display_len)].to_string();
         let key_rest = task.key[prefix_len.min(display_len)..display_len].to_string();
+
+        // Fetch tags
+        let tags = ops::tag::list_for_task(&mut *conn, task.id)
+            .await?
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
 
         // Check for subtasks
         let subtasks: Vec<Task> = sqlx::query_as(
@@ -239,6 +308,7 @@ async fn to_task_views(
             key_rest,
             title: task.title.clone(),
             description: task.description.clone(),
+            tags,
             has_subtasks,
             subtask_count,
             done_subtask_count,
