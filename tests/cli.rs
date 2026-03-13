@@ -278,6 +278,69 @@ fn full_workflow() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Ranger"));
 
+    // Mark a task as done for the --done test
+    let output = ranger(db_path)
+        .args(["task", "edit", &t1_key[..4], "--state", "done"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Backlog show hides done tasks by default
+    let output = ranger(db_path).args(["backlog", "show"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        !stdout.contains("[done]"),
+        "should not show done section by default"
+    );
+
+    // Backlog show --done shows only done tasks
+    let output = ranger(db_path)
+        .args(["backlog", "show", "--done"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("[done]"),
+        "should show done section with --done"
+    );
+    assert!(
+        !stdout.contains("[in_progress]"),
+        "--done should not show in_progress"
+    );
+    assert!(
+        !stdout.contains("[queued]"),
+        "--done should not show queued"
+    );
+    assert!(
+        !stdout.contains("[icebox]"),
+        "--done should not show icebox"
+    );
+
+    // Backlog show --done with JSON shows only done tasks
+    let output = ranger(db_path)
+        .args(["backlog", "show", "--done", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(detail["tasks"]["done"].is_array());
+    assert!(detail["tasks"]["queued"].is_null());
+    assert!(detail["tasks"]["in_progress"].is_null());
+
+    // Backlog show JSON without --done excludes done tasks
+    let output = ranger(db_path)
+        .args(["backlog", "show", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        detail["tasks"]["done"].is_null(),
+        "JSON should exclude done without --done"
+    );
+
     // Shell completions (no DB needed, but pass one anyway for the helper)
     for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
         let output = ranger(db_path)

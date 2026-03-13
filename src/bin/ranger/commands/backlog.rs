@@ -25,6 +25,10 @@ pub enum BacklogCommands {
         /// Backlog name
         #[arg(env = "RANGER_DEFAULT_BACKLOG")]
         name: String,
+
+        /// Show only done tasks
+        #[arg(long)]
+        done: bool,
     },
     /// Rebalance task positions in a backlog
     Rebalance {
@@ -51,12 +55,18 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
             let count = ops::task::rebalance(&mut conn, backlog.id).await?;
             println!("Rebalanced {count} tasks in {name}");
         }
-        BacklogCommands::Show { name } => {
+        BacklogCommands::Show { name, done } => {
             let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;
+
+            let states: Vec<State> = if done {
+                vec![State::Done]
+            } else {
+                vec![State::InProgress, State::Queued, State::Icebox]
+            };
 
             if json {
                 let mut state_groups = serde_json::Map::new();
-                for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
+                for state in &states {
                     let filter = ListFilter {
                         state: Some(state.clone()),
                         ..Default::default()
@@ -78,7 +88,7 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
 
                 print_backlog_detail(&backlog);
 
-                for state in [State::Done, State::InProgress, State::Queued, State::Icebox] {
+                for state in &states {
                     let filter = ListFilter {
                         state: Some(state.clone()),
                         ..Default::default()
