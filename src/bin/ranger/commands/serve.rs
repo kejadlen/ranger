@@ -1,56 +1,29 @@
 use axum::extract::State;
 use axum::http::header;
-use axum::response::{Html, IntoResponse};
+use axum::response::IntoResponse;
 use axum::{Router, routing::get};
+use maud::{DOCTYPE, Markup, html};
 use ranger::key;
 use ranger::models::Task;
 use ranger::ops;
 use ranger::ops::task::ListFilter;
-use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tera::{Context, Tera};
 use tokio::net::TcpListener;
 
 /// Static CSS embedded at compile time from `static/style.css`.
 const STYLE_CSS: &str = include_str!("../../../../static/style.css");
 
-/// Raw template strings embedded at compile time.
-const TEMPLATES: &[(&str, &str)] = &[
-    ("base.html", include_str!("../../../../templates/base.html")),
-    (
-        "board.html",
-        include_str!("../../../../templates/board.html"),
-    ),
-    (
-        "panels/backlog.html",
-        include_str!("../../../../templates/panels/backlog.html"),
-    ),
-    (
-        "panels/column.html",
-        include_str!("../../../../templates/panels/column.html"),
-    ),
-    ("task.html", include_str!("../../../../templates/task.html")),
-];
-
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
     backlog_name: String,
-    tera: Arc<Tera>,
 }
 
 pub async fn run(pool: &SqlitePool, port: u16, backlog_name: String) -> color_eyre::Result<()> {
-    let mut tera = Tera::default();
-    for &(name, content) in TEMPLATES {
-        tera.add_raw_template(name, content)?;
-    }
-
     let state = AppState {
         pool: pool.clone(),
         backlog_name,
-        tera: Arc::new(tera),
     };
 
     let app = Router::new()
@@ -71,16 +44,20 @@ async fn serve_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css")], STYLE_CSS)
 }
 
-async fn index(State(state): State<AppState>) -> Html<String> {
+async fn index(State(state): State<AppState>) -> Markup {
     match render_board(&state).await {
-        Ok(html) => Html(html),
-        Err(e) => Html(format!(
-            "<html><body><h1>Error</h1><pre>{e}</pre></body></html>"
-        )),
+        Ok(markup) => markup,
+        Err(e) => html! {
+            html {
+                body {
+                    h1 { "Error" }
+                    pre { (e) }
+                }
+            }
+        },
     }
 }
 
-#[derive(Serialize)]
 struct TaskView {
     key_prefix: String,
     key_rest: String,
@@ -91,14 +68,7 @@ struct TaskView {
     done_subtask_count: usize,
 }
 
-#[derive(Serialize)]
-struct ColumnView {
-    label: String,
-    state_class: String,
-    tasks: Vec<TaskView>,
-}
-
-async fn render_board(state: &AppState) -> color_eyre::Result<String> {
+async fn render_board(state: &AppState) -> color_eyre::Result<Markup> {
     let mut conn = state.pool.acquire().await?;
     let backlog = ops::backlog::get_by_name(&mut conn, &state.backlog_name).await?;
     let all_keys = ops::task::keys_for_backlog(&mut conn, backlog.id).await?;
@@ -131,29 +101,109 @@ async fn render_board(state: &AppState) -> color_eyre::Result<String> {
 
     let total = in_progress.len() + queued.len() + icebox.len() + done.len();
     let active = in_progress.len() + queued.len();
+    let backlog_name = &state.backlog_name;
 
-    let columns = vec![
-        ColumnView {
-            label: "Icebox".to_string(),
-            state_class: "state-icebox".to_string(),
-            tasks: icebox,
-        },
-        ColumnView {
-            label: "Done".to_string(),
-            state_class: "state-done".to_string(),
-            tasks: done,
-        },
-    ];
+    Ok(html! {
+        (DOCTYPE)
+        html lang="en" {
+            head {
+                meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
+                title { "ranger › " (backlog_name) }
+                link rel="stylesheet" href="/static/style.css";
+            }
+            body {
+                header {
+                    h1 { "ranger" span.sep { "›" } (backlog_name) }
+                    div.counts { (active) " active · " (total) " total" }
+                }
+                div.board {
+                    (render_backlog_panel(&in_progress, &queued))
+                    (render_column_panel("Icebox", "state-icebox", &icebox))
+                    (render_column_panel("Done", "state-done", &done))
+                }
+            }
+        }
+    })
+}
 
-    let mut context = Context::new();
-    context.insert("backlog_name", &state.backlog_name);
-    context.insert("active", &active);
-    context.insert("total", &total);
-    context.insert("in_progress", &in_progress);
-    context.insert("queued", &queued);
-    context.insert("columns", &columns);
+fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> Markup {
+    let count = in_progress.len() + queued.len();
+    html! {
+        div.panel {
+            div.panel-header {
+                h2 { "Backlog" }
+                span.count { (count) }
+            }
+            @if in_progress.is_empty() && queued.is_empty() {
+                div.empty { "No active tasks" }
+            } @else {
+                @if !in_progress.is_empty() {
+                    div.section-label.section-label-in-progress {
+                        span.dot { "●" } " In Progress"
+                    }
+                    div.state-in-progress {
+                        @for task in in_progress {
+                            (render_task(task))
+                        }
+                    }
+                }
+                @if !queued.is_empty() {
+                    div.section-label.section-label-queued {
+                        span.dot { "●" } " Queued"
+                    }
+                    div.state-queued {
+                        @for task in queued {
+                            (render_task(task))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
-    Ok(state.tera.render("board.html", &context)?)
+fn render_column_panel(label: &str, state_class: &str, tasks: &[TaskView]) -> Markup {
+    let count = tasks.len();
+    html! {
+        div.panel {
+            div.panel-header {
+                h2 { (label) }
+                span.count { (count) }
+            }
+            @if tasks.is_empty() {
+                div.empty { "No " (label.to_lowercase()) " tasks" }
+            } @else {
+                div class=(state_class) {
+                    @for task in tasks {
+                        (render_task(task))
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_task(task: &TaskView) -> Markup {
+    html! {
+        div.task {
+            div.task-header {
+                span.key {
+                    span.key-prefix { (task.key_prefix) }
+                    span.key-rest { (task.key_rest) }
+                }
+                span.title { (task.title) }
+            }
+            @if let Some(desc) = &task.description {
+                div.desc { (desc) }
+            }
+            @if task.has_subtasks {
+                div.subtask-indicator {
+                    "◆ " (task.done_subtask_count) "/" (task.subtask_count) " subtasks"
+                }
+            }
+        }
+    }
 }
 
 async fn to_task_views(
