@@ -1,5 +1,6 @@
 use axum::extract::State;
-use axum::response::Html;
+use axum::http::header;
+use axum::response::{Html, IntoResponse};
 use axum::{Router, routing::get};
 use ranger::key;
 use ranger::models::Task;
@@ -8,6 +9,9 @@ use ranger::ops::task::ListFilter;
 use sqlx::SqlitePool;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+
+/// Static CSS embedded at compile time from `static/style.css`.
+const STYLE_CSS: &str = include_str!("../../../../static/style.css");
 
 #[derive(Clone)]
 struct AppState {
@@ -21,7 +25,10 @@ pub async fn run(pool: &SqlitePool, port: u16, backlog_name: String) -> color_ey
         backlog_name,
     };
 
-    let app = Router::new().route("/", get(index)).with_state(state);
+    let app = Router::new()
+        .route("/", get(index))
+        .route("/static/style.css", get(serve_css))
+        .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     eprintln!("Listening on http://{addr}");
@@ -30,6 +37,10 @@ pub async fn run(pool: &SqlitePool, port: u16, backlog_name: String) -> color_ey
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn serve_css() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/css")], STYLE_CSS)
 }
 
 async fn index(State(state): State<AppState>) -> Html<String> {
@@ -95,140 +106,7 @@ async fn render_board(state: &AppState) -> color_eyre::Result<String> {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ranger › {backlog_name}</title>
-<style>
-  :root {{
-    --bg: #0e0e10;
-    --surface: #1a1a1e;
-    --border: #2a2a2e;
-    --text: #e0e0e0;
-    --text-dim: #888;
-    --accent: #7c6fe0;
-    --green: #4caf50;
-    --yellow: #e0b44c;
-    --blue: #5b9fe0;
-  }}
-  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-  }}
-  header {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }}
-  header h1 {{
-    font-size: 16px;
-    font-weight: 600;
-  }}
-  header h1 span.sep {{
-    color: var(--text-dim);
-    margin: 0 6px;
-  }}
-  header .counts {{
-    font-size: 13px;
-    color: var(--text-dim);
-  }}
-  .board {{
-    display: grid;
-    grid-template-columns: 1fr 280px 300px;
-    height: calc(100vh - 49px);
-  }}
-  .panel {{
-    border-right: 1px solid var(--border);
-    overflow-y: auto;
-    padding: 16px;
-  }}
-  .panel:last-child {{
-    border-right: none;
-  }}
-  .panel-header {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-  }}
-  .panel-header h2 {{
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-dim);
-  }}
-  .panel-header .count {{
-    font-size: 11px;
-    color: var(--text-dim);
-    background: var(--border);
-    padding: 1px 6px;
-    border-radius: 8px;
-  }}
-  .section-label {{
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--accent);
-    margin: 16px 0 8px 0;
-  }}
-  .section-label:first-child {{
-    margin-top: 0;
-  }}
-  .task {{
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px 12px;
-    margin-bottom: 6px;
-  }}
-  .task .task-header {{
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-  }}
-  .task .key {{
-    font-family: "SF Mono", "Fira Code", monospace;
-    font-size: 11px;
-    color: var(--accent);
-    flex-shrink: 0;
-  }}
-  .task .title {{
-    font-size: 14px;
-    font-weight: 500;
-  }}
-  .task .desc {{
-    font-size: 12px;
-    color: var(--text-dim);
-    margin-top: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }}
-  .task .subtask-indicator {{
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 4px;
-  }}
-  .state-in_progress .task {{ border-left: 3px solid var(--yellow); }}
-  .state-queued .task {{ border-left: 3px solid var(--blue); }}
-  .state-done .task {{
-    border-left: 3px solid var(--green);
-    opacity: 0.7;
-  }}
-  .empty {{
-    font-size: 13px;
-    color: var(--text-dim);
-    font-style: italic;
-    padding: 20px 0;
-    text-align: center;
-  }}
-</style>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header>
@@ -261,8 +139,8 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> String
         html.push_str(r#"<div class="empty">No active tasks</div>"#);
     } else {
         if !in_progress.is_empty() {
-            html.push_str(r#"<div class="section-label">In Progress</div>"#);
-            html.push_str(r#"<div class="state-in_progress">"#);
+            html.push_str(r#"<div class="section-label section-label-in-progress">In Progress</div>"#);
+            html.push_str(r#"<div class="state-in-progress">"#);
             for task in in_progress {
                 html.push_str(&render_task(task));
             }
@@ -270,7 +148,7 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> String
         }
 
         if !queued.is_empty() {
-            html.push_str(r#"<div class="section-label">Queued</div>"#);
+            html.push_str(r#"<div class="section-label section-label-queued">Queued</div>"#);
             html.push_str(r#"<div class="state-queued">"#);
             for task in queued {
                 html.push_str(&render_task(task));
@@ -291,6 +169,7 @@ fn render_column_panel(name: &str, tasks: &[TaskView]) -> String {
     };
     let state_class = match name {
         "done" => "state-done",
+        "icebox" => "state-icebox",
         _ => "",
     };
     let count = tasks.len();

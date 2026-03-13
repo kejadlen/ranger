@@ -1,0 +1,227 @@
+/* ──────────────────────────────────────────────
+   Ranger — Design Tokens & Tracker-Inspired Styling
+   ────────────────────────────────────────────── */
+
+/* === Utopia fluid type scale ===
+   https://utopia.fyi — clamp()-based fluid sizing
+   Base: 13px @ 320 → 13px @ 1280 (flat for body)
+   Keys: 11px fixed (monospace, no scaling needed)
+   ────────────────────────────────────────────── */
+
+:root {
+  /* ── Color tokens: surfaces ── */
+  --color-bg-header:   #3c3d3f;
+  --color-bg-panel:    #eeeddf;
+  --color-border:      #d5d3c5;
+
+  /* ── Color tokens: text ── */
+  --color-text:        #333;
+  --color-text-muted:  #7a7868;
+  --color-text-header: #fff;
+
+  /* ── Color tokens: accent ── */
+  --color-accent:      #3d6098;
+
+  /* ── Color tokens: state ── */
+  --color-in-progress: #629a3e;
+  --color-queued:      #3d6098;
+  --color-done:        #8ba83b;
+  --color-icebox:      #8a8878;
+
+  /* ── State row tints (12 % opacity) ── */
+  --tint-in-progress:  rgba(98, 154, 62, 0.12);
+  --tint-queued:       rgba(61, 96, 152, 0.12);
+  --tint-done:         rgba(139, 168, 59, 0.12);
+  --tint-icebox:       rgba(138, 136, 120, 0.12);
+
+  /* ── Typography ── */
+  --font-sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                "Helvetica Neue", Arial, sans-serif;
+  --font-mono:  "SF Mono", "Fira Code", "Cascadia Code", Menlo, Consolas,
+                monospace;
+
+  /* Fluid type scale (utopia-style clamp, flat at this range) */
+  --step-0:    clamp(0.8125rem, 0.8125rem + 0vi, 0.8125rem);  /* 13px */
+  --step-mono: 0.6875rem;                                       /* 11px */
+
+  /* ── Spacing ── */
+  --row-padding-y:  7px;
+  --row-gap:        1px;
+  --panel-padding:  20px;
+  --radius:         2px;
+}
+
+
+/* === Reset === */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+
+/* === Body === */
+body {
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg-panel);
+}
+
+
+/* === Header === */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 24px;
+  background: var(--color-bg-header);
+  color: var(--color-text-header);
+}
+
+header h1 {
+  font-size: var(--step-0);
+  font-weight: 600;
+}
+
+header h1 .sep {
+  color: var(--color-text-muted);
+  margin: 0 6px;
+}
+
+header .counts {
+  font-size: var(--step-mono);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+
+/* === Board layout === */
+.board {
+  display: grid;
+  grid-template-columns: 1fr 280px 300px;
+  height: calc(100vh - 41px);          /* header height */
+}
+
+
+/* === Panels === */
+.panel {
+  overflow-y: auto;
+  padding: var(--panel-padding);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+}
+
+.panel:last-child {
+  border-right: none;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panel-header h2 {
+  font-size: var(--step-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.panel-header .count {
+  font-size: var(--step-mono);
+  color: var(--color-text-muted);
+  background: var(--color-border);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+
+/* === Section labels === */
+.section-label {
+  font-size: var(--step-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 16px 0 8px 0;
+}
+
+.section-label:first-child {
+  margin-top: 0;
+}
+
+.section-label-in-progress { color: var(--color-in-progress); }
+.section-label-queued      { color: var(--color-queued); }
+.section-label-done        { color: var(--color-done); }
+.section-label-icebox      { color: var(--color-icebox); }
+
+
+/* === Task rows === */
+.task {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--row-padding-y) 10px;
+  margin-bottom: var(--row-gap);
+}
+
+.task .task-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.task .key {
+  font-family: var(--font-mono);
+  font-size: var(--step-mono);
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.task .title {
+  font-size: var(--step-0);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.task .desc {
+  font-size: var(--step-mono);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task .subtask-indicator {
+  font-size: var(--step-mono);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+
+/* === State-specific row tints === */
+.state-in-progress .task { background: var(--tint-in-progress); }
+.state-queued .task      { background: var(--tint-queued); }
+.state-done .task        { background: var(--tint-done); }
+.state-icebox .task      { background: var(--tint-icebox); }
+
+/* Done tasks are slightly desaturated */
+.state-done .task {
+  opacity: 0.75;
+}
+
+
+/* === Empty states === */
+.empty {
+  font-size: var(--step-0);
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: 20px 0;
+  text-align: center;
+}
