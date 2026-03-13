@@ -8,6 +8,7 @@ name = "ranger"
 path = "src/bin/ranger/main.rs"
 
 [dependencies]
+axum = "*"
 color-eyre = "*"
 tracing-subscriber = { version = "*", features = ["env-filter"] }
 jiff = { version = "*", features = ["serde"] }

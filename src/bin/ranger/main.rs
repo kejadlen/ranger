@@ -40,6 +40,15 @@ enum Commands {
         #[command(subcommand)]
         command: commands::comment::CommentCommands,
     },
+    /// Start the web server
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value_t = 3000)]
+        port: u16,
+        /// Backlog to display
+        #[arg(long, env = "RANGER_DEFAULT_BACKLOG")]
+        backlog: String,
+    },
 }
 
 fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
@@ -72,6 +81,9 @@ async fn main() -> color_eyre::Result<()> {
         }
         Some(Commands::Comment { command }) => {
             commands::comment::run(&pool, command, cli.json).await?;
+        }
+        Some(Commands::Serve { port, backlog }) => {
+            commands::serve::run(&pool, port, backlog).await?;
         }
         None => {
             // No subcommand: show the default backlog
