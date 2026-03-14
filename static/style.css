@@ -93,6 +93,29 @@ header h1 .sep {
   margin: 0 6px;
 }
 
+/* === Backlog selector === */
+.backlog-select {
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--color-text-header);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  outline: none;
+}
+
+.backlog-select:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.backlog-select option {
+  color: #333;
+  background: #fff;
+}
+
 header .counts {
   font-size: var(--step-mono);
   color: rgba(224, 224, 224, 0.5);

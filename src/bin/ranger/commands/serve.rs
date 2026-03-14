@@ -1,6 +1,6 @@
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::header;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 use axum::{Router, routing::get};
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 use ranger::key;
@@ -17,17 +17,22 @@ const STYLE_CSS: &str = include_str!("../../../../static/style.css");
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
-    backlog_name: String,
+    default_backlog: Option<String>,
 }
 
-pub async fn run(pool: &SqlitePool, port: u16, backlog_name: String) -> color_eyre::Result<()> {
+pub async fn run(
+    pool: &SqlitePool,
+    port: u16,
+    default_backlog: Option<String>,
+) -> color_eyre::Result<()> {
     let state = AppState {
         pool: pool.clone(),
-        backlog_name,
+        default_backlog,
     };
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/b/{name}", get(board))
         .route("/static/style.css", get(serve_css))
         .with_state(state);
 
@@ -44,17 +49,38 @@ async fn serve_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css")], STYLE_CSS)
 }
 
-async fn index(State(state): State<AppState>) -> Markup {
-    match render_board(&state).await {
+async fn index(State(state): State<AppState>) -> Result<Redirect, Markup> {
+    // If a default backlog is set, redirect to it
+    if let Some(ref name) = state.default_backlog {
+        return Ok(Redirect::to(&format!("/b/{name}")));
+    }
+
+    // Otherwise, redirect to the first backlog
+    let mut conn = state.pool.acquire().await.map_err(error_page)?;
+    let backlogs = ops::backlog::list(&mut conn).await.map_err(error_page)?;
+
+    match backlogs.first() {
+        Some(b) => Ok(Redirect::to(&format!("/b/{}", b.name))),
+        None => Err(error_page("No backlogs found")),
+    }
+}
+
+async fn board(State(state): State<AppState>, Path(name): Path<String>) -> Markup {
+    match render_board(&state, &name).await {
         Ok(markup) => markup,
-        Err(e) => html! {
-            html {
-                body {
-                    h1 { "Error" }
-                    pre { (e) }
-                }
+        Err(e) => error_page(e),
+    }
+}
+
+fn error_page(e: impl std::fmt::Display) -> Markup {
+    html! {
+        (DOCTYPE)
+        html {
+            body {
+                h1 { "Error" }
+                pre { (e.to_string()) }
             }
-        },
+        }
     }
 }
 
@@ -69,9 +95,14 @@ struct TaskView {
     done_subtask_count: usize,
 }
 
-async fn render_board(state: &AppState) -> color_eyre::Result<Markup> {
+async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Result<Markup> {
     let mut conn = state.pool.acquire().await?;
-    let backlog = ops::backlog::get_by_name(&mut conn, &state.backlog_name).await?;
+
+    // Fetch all backlogs for the selector
+    let backlogs = ops::backlog::list(&mut conn).await?;
+    let backlog_names: Vec<String> = backlogs.iter().map(|b| b.name.clone()).collect();
+
+    let backlog = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
     let all_keys = ops::task::keys_for_backlog(&mut conn, backlog.id).await?;
     let prefixes = key::unique_prefix_lengths(&all_keys);
 
@@ -102,7 +133,6 @@ async fn render_board(state: &AppState) -> color_eyre::Result<Markup> {
 
     let total = in_progress.len() + queued.len() + icebox.len() + done.len();
     let active = in_progress.len() + queued.len();
-    let backlog_name = &state.backlog_name;
 
     Ok(html! {
         (DOCTYPE)
@@ -115,7 +145,18 @@ async fn render_board(state: &AppState) -> color_eyre::Result<Markup> {
             }
             body {
                 header {
-                    h1 { "ranger" span.sep { "›" } (backlog_name) }
+                    h1 {
+                        "ranger" span.sep { "›" }
+                        @if backlog_names.len() > 1 {
+                            select.backlog-select onchange="window.location.href='/b/'+this.value" {
+                                @for name in &backlog_names {
+                                    option value=(name) selected[name == backlog_name] { (name) }
+                                }
+                            }
+                        } @else {
+                            (backlog_name)
+                        }
+                    }
                     div.counts { (active) " active · " (total) " total" }
                 }
                 div.board {

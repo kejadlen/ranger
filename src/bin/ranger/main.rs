@@ -53,9 +53,9 @@ enum Commands {
         /// Port to listen on
         #[arg(long, default_value_t = 3000)]
         port: u16,
-        /// Backlog to display
+        /// Default backlog to display
         #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        backlog: String,
+        backlog: Option<String>,
     },
 }
 
