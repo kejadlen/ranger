@@ -94,26 +94,81 @@ header h1 .sep {
 }
 
 /* === Backlog selector === */
-.backlog-select {
-  font-family: var(--font-sans);
-  font-size: var(--step-0);
-  font-weight: 600;
-  color: var(--color-text-header);
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  padding: 2px 6px;
+.backlog-picker {
+  position: relative;
+  display: inline-block;
+}
+
+.backlog-trigger {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: none;
+  border: none;
   cursor: pointer;
-  outline: none;
+  padding: 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.3);
 }
 
-.backlog-select:hover {
-  background: rgba(255, 255, 255, 0.15);
+.backlog-trigger:hover {
+  border-bottom-color: rgba(255, 255, 255, 0.6);
 }
 
-.backlog-select option {
-  color: #333;
-  background: #fff;
+.backlog-caret {
+  font-size: 0.6em;
+  opacity: 0.4;
+  margin-left: 2px;
+}
+
+/* === Backlog popover === */
+dialog {
+  border: none;
+  border-radius: 6px;
+  padding: 0;
+  background: #2e3036;
+  color: var(--color-text);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  min-width: 180px;
+  margin: 0;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+}
+
+dialog::backdrop {
+  background: transparent;
+}
+
+dialog[open] {
+  display: block;
+}
+
+.dialog-header {
+  display: none;
+}
+
+.backlog-list {
+  list-style: none;
+  padding: 4px;
+}
+
+.backlog-option {
+  display: block;
+  padding: 6px 12px;
+  color: var(--color-text);
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: var(--step-0);
+}
+
+.backlog-option:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.backlog-option.active {
+  color: var(--color-accent);
 }
 
 header .counts {

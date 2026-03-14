@@ -148,9 +148,22 @@ async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Resul
                     h1 {
                         "ranger" span.sep { "›" }
                         @if backlog_names.len() > 1 {
-                            select.backlog-select onchange="window.location.href='/b/'+this.value" {
-                                @for name in &backlog_names {
-                                    option value=(name) selected[name == backlog_name] { (name) }
+                            span.backlog-picker {
+                                button.backlog-trigger onclick="document.getElementById('backlog-dialog').show()" {
+                                    (backlog_name)
+                                    span.backlog-caret { "▾" }
+                                }
+                                dialog #backlog-dialog {
+                                    ul.backlog-list {
+                                        @for name in &backlog_names {
+                                            li {
+                                                a.backlog-option class=@if name == backlog_name { "active" }
+                                                  href=(format!("/b/{name}")) {
+                                                    (name)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         } @else {
@@ -278,6 +291,13 @@ fn keyboard_nav_script() -> Markup {
         script {
             (PreEscaped(r#"
             (function() {
+                // Close backlog popover on outside click
+                document.addEventListener('click', function(e) {
+                    var dialog = document.getElementById('backlog-dialog');
+                    if (dialog && dialog.open && !dialog.contains(e.target) && !e.target.closest('.backlog-trigger')) {
+                        dialog.close();
+                    }
+                });
                 function getFocusables() {
                     return Array.from(document.querySelectorAll(
                         'details.task > summary, div.task'
