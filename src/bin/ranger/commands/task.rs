@@ -80,9 +80,6 @@ pub enum TaskCommands {
         /// Initial state (icebox, queued, in_progress, done)
         #[arg(long)]
         state: Option<String>,
-        /// Parent task key or prefix (makes this a subtask)
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_task_keys))]
-        parent: Option<String>,
         #[command(flatten)]
         position: PositionArgs,
     },
@@ -180,21 +177,11 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             backlog,
             description,
             state,
-            parent,
             position,
         } => {
             let mut tx = pool.begin().await?;
 
             let bl = ops::backlog::get_by_name(&mut tx, &backlog).await?;
-            let parent_id = if let Some(parent_key) = &parent {
-                Some(
-                    ops::task::get_by_key_prefix(&mut tx, parent_key, Some(bl.id))
-                        .await?
-                        .id,
-                )
-            } else {
-                None
-            };
             let anchors = position.resolve(&mut tx, Some(bl.id)).await?;
             let state = state.map(|s| s.parse::<State>()).transpose()?;
 
@@ -204,7 +191,6 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                     title: &title,
                     backlog_id: bl.id,
                     state,
-                    parent_id,
                     description: description.as_deref(),
                 },
             )
@@ -398,9 +384,6 @@ fn print_task_detail(t: &Task, prefixes: &HashMap<String, usize>) {
     }
     if let Some(desc) = &t.description {
         println!("Desc:    {}", desc);
-    }
-    if let Some(pid) = t.parent_id {
-        println!("Parent:  {}", pid);
     }
     println!("Created: {}", t.created_at);
     println!("Updated: {}", t.updated_at);

@@ -4,13 +4,12 @@ use crate::models::{State, Task};
 use crate::position;
 use sqlx::sqlite::SqliteConnection;
 
-const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.backlog_id, tasks.parent_id, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at";
+const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.backlog_id, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at";
 
 pub struct CreateTask<'a> {
     pub title: &'a str,
     pub backlog_id: i64,
     pub state: Option<State>,
-    pub parent_id: Option<i64>,
     pub description: Option<&'a str>,
 }
 
@@ -33,15 +32,14 @@ pub async fn create(
     let new_pos = position::between(last_pos.as_deref().unwrap_or(""), "");
 
     let query = format!(
-        "INSERT INTO tasks (key, backlog_id, parent_id, title, description, state, position) \
-         VALUES (?, ?, ?, ?, ?, ?, ?) \
+        "INSERT INTO tasks (key, backlog_id, title, description, state, position) \
+         VALUES (?, ?, ?, ?, ?, ?) \
          RETURNING {TASK_COLUMNS}"
     );
 
     let task = sqlx::query_as::<_, Task>(&query)
         .bind(&key)
         .bind(params.backlog_id)
-        .bind(params.parent_id)
         .bind(params.title)
         .bind(params.description)
         .bind(state.as_str())
@@ -183,22 +181,6 @@ pub async fn edit(
             .await?;
     }
     if let Some(new_state) = &state {
-        // Prevent marking a parent done while subtasks are incomplete
-        if *new_state == State::Done {
-            let incomplete: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM tasks WHERE parent_id = ? AND state != 'done'",
-            )
-            .bind(task_id)
-            .fetch_one(&mut *conn)
-            .await?;
-
-            if incomplete > 0 {
-                return Err(RangerError::IncompleteSubtasks {
-                    count: incomplete as usize,
-                });
-            }
-        }
-
         // Fetch the current state to determine direction
         let old_state: State = sqlx::query_scalar("SELECT state FROM tasks WHERE id = ?")
             .bind(task_id)
@@ -268,34 +250,6 @@ pub async fn move_task(
                 task_state: task.state.to_string(),
                 anchor_state: anchor.state.to_string(),
             });
-        }
-    }
-
-    // Parent-child ordering: parent must come after children.
-    // Check if task is being moved before one of its own children,
-    // or if a child is being moved after its parent.
-    for anchor in placement.anchors() {
-        // Is anchor a child of task? (task is the parent being moved)
-        if anchor.parent_id == Some(task.id) {
-            // task is parent, anchor is child — parent can't go before child
-            match &placement {
-                Placement::Before(_) => return Err(RangerError::ParentBeforeChild),
-                Placement::Between { before, .. } if before.id == anchor.id => {
-                    return Err(RangerError::ParentBeforeChild);
-                }
-                _ => {}
-            }
-        }
-        // Is task a child of anchor? (anchor is the parent)
-        if task.parent_id == Some(anchor.id) {
-            // task is child, anchor is parent — child can't go after parent
-            match &placement {
-                Placement::After(_) => return Err(RangerError::ChildAfterParent),
-                Placement::Between { after, .. } if after.id == anchor.id => {
-                    return Err(RangerError::ChildAfterParent);
-                }
-                _ => {}
-            }
         }
     }
 
@@ -539,7 +493,6 @@ mod tests {
                 title: "My Task",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -564,7 +517,6 @@ mod tests {
                 title: "First",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -576,7 +528,6 @@ mod tests {
                 title: "Second",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -588,7 +539,6 @@ mod tests {
                 title: "Third",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -615,7 +565,6 @@ mod tests {
                 title: "Icebox task",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -627,7 +576,6 @@ mod tests {
                 title: "Queued task",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -672,7 +620,6 @@ mod tests {
                 title: "Find me",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -696,7 +643,6 @@ mod tests {
                 title: "Original",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -729,7 +675,6 @@ mod tests {
                 title: "Delete me",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -758,7 +703,6 @@ mod tests {
                 title: "Find by id",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -838,7 +782,6 @@ mod tests {
                 title: "Original",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -863,7 +806,6 @@ mod tests {
                 title: "First",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -875,7 +817,6 @@ mod tests {
                 title: "Second",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -905,7 +846,6 @@ mod tests {
                 title: "A",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -917,7 +857,6 @@ mod tests {
                 title: "B",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -929,7 +868,6 @@ mod tests {
                 title: "C",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -959,7 +897,6 @@ mod tests {
                 title: "A",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -971,7 +908,6 @@ mod tests {
                 title: "B",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -983,7 +919,6 @@ mod tests {
                 title: "C",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1013,7 +948,6 @@ mod tests {
                 title: "A",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1025,7 +959,6 @@ mod tests {
                 title: "B",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1037,7 +970,6 @@ mod tests {
                 title: "C",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1074,7 +1006,6 @@ mod tests {
                 title: "Q",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1086,7 +1017,6 @@ mod tests {
                 title: "D",
                 backlog_id: bl.id,
                 state: Some(State::Done),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1113,7 +1043,6 @@ mod tests {
                 title: "Done 1",
                 backlog_id: bl.id,
                 state: Some(State::Done),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1125,7 +1054,6 @@ mod tests {
                 title: "Done 2",
                 backlog_id: bl.id,
                 state: Some(State::Done),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1137,7 +1065,6 @@ mod tests {
                 title: "Queued 1",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1182,7 +1109,6 @@ mod tests {
                 title: "Queued 1",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1194,7 +1120,6 @@ mod tests {
                 title: "Queued 2",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1206,7 +1131,6 @@ mod tests {
                 title: "In Progress",
                 backlog_id: bl.id,
                 state: Some(State::InProgress),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1250,7 +1174,6 @@ mod tests {
                 title: "First",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1262,7 +1185,6 @@ mod tests {
                 title: "Second",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1303,7 +1225,6 @@ mod tests {
                 title: "Queued task",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1342,7 +1263,6 @@ mod tests {
                 title: "In progress task",
                 backlog_id: bl.id,
                 state: Some(State::InProgress),
-                parent_id: None,
                 description: None,
             },
         )
@@ -1383,7 +1303,6 @@ mod tests {
                     title,
                     backlog_id: bl.id,
                     state: None,
-                    parent_id: None,
                     description: None,
                 },
             )
@@ -1442,7 +1361,6 @@ mod tests {
                 title: "Task in Alpha",
                 backlog_id: bl1.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1455,7 +1373,6 @@ mod tests {
                 title: "Task in Beta",
                 backlog_id: bl2.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1484,7 +1401,6 @@ mod tests {
                 title: "Keep",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1496,7 +1412,6 @@ mod tests {
                 title: "Archive me",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -1537,471 +1452,6 @@ mod tests {
         assert_eq!(visible.len(), 2);
     }
 
-    // -- Parent-child constraint tests --
-
-    #[tokio::test]
-    async fn parent_cannot_be_marked_done_with_incomplete_subtasks() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: Some(State::Queued),
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: Some(State::Queued),
-                parent_id: Some(parent.id),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        let err = edit(&mut conn, parent.id, None, None, Some(State::Done))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("incomplete"),
-            "expected incomplete subtasks error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn parent_can_be_marked_done_when_all_subtasks_done() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: Some(State::Queued),
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: Some(State::Done),
-                parent_id: Some(parent.id),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        let updated = edit(&mut conn, parent.id, None, None, Some(State::Done))
-            .await
-            .unwrap();
-        assert_eq!(updated.state, State::Done);
-    }
-
-    #[tokio::test]
-    async fn parent_can_change_to_non_done_state_with_incomplete_subtasks() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: Some(State::Queued),
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: Some(State::Queued),
-                parent_id: Some(parent.id),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        // Moving to in_progress is fine even with incomplete subtasks
-        let updated = edit(&mut conn, parent.id, None, None, Some(State::InProgress))
-            .await
-            .unwrap();
-        assert_eq!(updated.state, State::InProgress);
-    }
-
-    #[tokio::test]
-    async fn task_without_subtasks_can_be_marked_done_freely() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        let task = create(
-            &mut conn,
-            CreateTask {
-                title: "Leaf task",
-                backlog_id: bl.id,
-                state: Some(State::Queued),
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        let updated = edit(&mut conn, task.id, None, None, Some(State::Done))
-            .await
-            .unwrap();
-        assert_eq!(updated.state, State::Done);
-    }
-
-    #[tokio::test]
-    async fn move_parent_before_subtask_rejected() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        // child first, parent second (correct ordering)
-        let child = create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        // Set parent_id after creation to avoid ordering chicken-and-egg
-        sqlx::query("UPDATE tasks SET parent_id = ? WHERE id = ?")
-            .bind(parent.id)
-            .bind(child.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let child = get_by_id(&mut conn, child.id).await.unwrap();
-
-        // Try to move parent before its child — should fail
-        let err = move_task(&mut conn, &parent, Placement::Before(&child))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("parent"),
-            "expected parent-before-child error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn move_subtask_after_parent_rejected() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        // child first, parent second (correct ordering)
-        let child = create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        sqlx::query("UPDATE tasks SET parent_id = ? WHERE id = ?")
-            .bind(parent.id)
-            .bind(child.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let child = get_by_id(&mut conn, child.id).await.unwrap();
-
-        // Try to move child after its parent — should fail
-        let err = move_task(&mut conn, &child, Placement::After(&parent))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("subtask"),
-            "expected child-after-parent error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn move_parent_between_with_child_as_before_rejected() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        // order: other, child, parent
-        let other = create(
-            &mut conn,
-            CreateTask {
-                title: "Other",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let child = create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        sqlx::query("UPDATE tasks SET parent_id = ? WHERE id = ?")
-            .bind(parent.id)
-            .bind(child.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let child = get_by_id(&mut conn, child.id).await.unwrap();
-
-        // Try to place parent between other and child (before=child) — should fail
-        let err = move_task(
-            &mut conn,
-            &parent,
-            Placement::Between {
-                after: &other,
-                before: &child,
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("parent"),
-            "expected parent-before-child error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn move_subtask_between_with_parent_as_after_rejected() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        // order: child, parent, other
-        let child = create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let other = create(
-            &mut conn,
-            CreateTask {
-                title: "Other",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        sqlx::query("UPDATE tasks SET parent_id = ? WHERE id = ?")
-            .bind(parent.id)
-            .bind(child.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let child = get_by_id(&mut conn, child.id).await.unwrap();
-
-        // Try to place child between parent and other (after=parent) — should fail
-        let err = move_task(
-            &mut conn,
-            &child,
-            Placement::Between {
-                after: &parent,
-                before: &other,
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("subtask"),
-            "expected child-after-parent error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn move_parent_after_child_is_fine() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        let child = create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        sqlx::query("UPDATE tasks SET parent_id = ? WHERE id = ?")
-            .bind(parent.id)
-            .bind(child.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let child = get_by_id(&mut conn, child.id).await.unwrap();
-
-        // Moving parent after its child is fine (preserves child-before-parent order)
-        move_task(&mut conn, &parent, Placement::After(&child))
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn move_subtask_before_parent_is_fine() {
-        let pool = test_pool().await;
-        let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
-
-        let child = create(
-            &mut conn,
-            CreateTask {
-                title: "Child",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        let parent = create(
-            &mut conn,
-            CreateTask {
-                title: "Parent",
-                backlog_id: bl.id,
-                state: None,
-                parent_id: None,
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-        sqlx::query("UPDATE tasks SET parent_id = ? WHERE id = ?")
-            .bind(parent.id)
-            .bind(child.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        let child = get_by_id(&mut conn, child.id).await.unwrap();
-
-        // Moving child before its parent is fine (preserves child-before-parent order)
-        move_task(&mut conn, &child, Placement::Before(&parent))
-            .await
-            .unwrap();
-    }
-
     #[tokio::test]
     async fn list_tasks_with_tag_and_state_filter() {
         let pool = test_pool().await;
@@ -2013,7 +1463,6 @@ mod tests {
                 title: "Tagged queued",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )
@@ -2025,7 +1474,6 @@ mod tests {
                 title: "Untagged queued",
                 backlog_id: bl.id,
                 state: Some(State::Queued),
-                parent_id: None,
                 description: None,
             },
         )

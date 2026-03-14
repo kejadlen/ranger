@@ -91,7 +91,6 @@ pub struct Task {
     pub id: i64,
     pub key: String,
     pub backlog_id: i64,
-    pub parent_id: Option<i64>,
     pub title: String,
     pub description: Option<String>,
     pub state: State,

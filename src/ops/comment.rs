@@ -52,7 +52,6 @@ mod tests {
                 title: "Task",
                 backlog_id: bl.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )

@@ -102,7 +102,6 @@ mod tests {
                 title: "Test task",
                 backlog_id: backlog.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )
@@ -183,7 +182,6 @@ mod tests {
                 title: "Second task",
                 backlog_id: backlog.id,
                 state: None,
-                parent_id: None,
                 description: None,
             },
         )

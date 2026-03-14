@@ -344,12 +344,6 @@ details.task[open] > summary .expand-icon {
   word-break: break-word;
 }
 
-.task .subtask-indicator {
-  font-size: var(--step-mono);
-  color: #7a7868;
-  margin-top: 4px;
-}
-
 /* === Tags === */
 .task .tags {
   display: inline-flex;

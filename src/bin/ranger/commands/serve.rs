@@ -90,9 +90,6 @@ struct TaskView {
     title: String,
     description: Option<String>,
     tags: Vec<String>,
-    has_subtasks: bool,
-    subtask_count: usize,
-    done_subtask_count: usize,
 }
 
 async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Result<Markup> {
@@ -235,7 +232,7 @@ fn render_column_panel(label: &str, state_class: &str, tasks: &[TaskView]) -> Ma
 }
 
 fn render_task(task: &TaskView) -> Markup {
-    let has_details = task.description.is_some() || task.has_subtasks;
+    let has_details = task.description.is_some();
     html! {
         @if has_details {
             details.task {
@@ -257,11 +254,6 @@ fn render_task(task: &TaskView) -> Markup {
                 div.task-body {
                     @if let Some(desc) = &task.description {
                         div.desc { (desc) }
-                    }
-                    @if task.has_subtasks {
-                        div.subtask-indicator {
-                            "◆ " (task.done_subtask_count) "/" (task.subtask_count) " subtasks"
-                        }
                     }
                 }
             }
@@ -349,31 +341,12 @@ async fn to_task_views(
             .map(|t| t.name)
             .collect();
 
-        // Check for subtasks
-        let subtasks: Vec<Task> = sqlx::query_as(
-            "SELECT id, key, backlog_id, parent_id, title, description, state, position, archived, created_at, updated_at \
-             FROM tasks WHERE parent_id = ? AND archived = 0 ORDER BY position",
-        )
-        .bind(task.id)
-        .fetch_all(&mut **conn)
-        .await?;
-
-        let has_subtasks = !subtasks.is_empty();
-        let subtask_count = subtasks.len();
-        let done_subtask_count = subtasks
-            .iter()
-            .filter(|t| t.state == ranger::models::State::Done)
-            .count();
-
         views.push(TaskView {
             key_prefix,
             key_rest,
             title: task.title.clone(),
             description: task.description.clone(),
             tags,
-            has_subtasks,
-            subtask_count,
-            done_subtask_count,
         });
     }
     Ok(views)
