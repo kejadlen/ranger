@@ -248,12 +248,14 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let task = ops::task::get_by_key_prefix(&mut conn, &key, backlog_scope).await?;
             let comments = ops::comment::list(&mut conn, task.id).await?;
             let tags = ops::tag::list_for_task(&mut conn, task.id).await?;
+            let edges = ops::edge::list_for_task(&mut conn, task.id).await?;
 
             if json {
                 let detail = serde_json::json!({
                     "task": task,
                     "comments": comments,
                     "tags": tags,
+                    "edges": edges,
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
@@ -264,6 +266,22 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 if !tags.is_empty() {
                     let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
                     println!("Tags:    {}", tag_names.join(", "));
+                }
+                if !edges.is_empty() {
+                    for e in &edges {
+                        let other_id = if e.from_task_id == task.id {
+                            e.to_task_id
+                        } else {
+                            e.from_task_id
+                        };
+                        let other = ops::task::get_by_id(&mut conn, other_id).await?;
+                        let other_key = output::format_key_from_map(&other.key, &prefixes);
+                        if e.from_task_id == task.id {
+                            println!("Edge:    {} → {}", e.edge_type, other_key);
+                        } else {
+                            println!("Edge:    {} ← {}", e.edge_type, other_key);
+                        }
+                    }
                 }
                 if !comments.is_empty() {
                     println!();

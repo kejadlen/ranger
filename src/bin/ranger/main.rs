@@ -42,6 +42,12 @@ enum Commands {
         #[command(subcommand)]
         command: commands::comment::CommentCommands,
     },
+    /// Manage task edges (dependencies and ordering)
+    #[command(visible_alias = "e")]
+    Edge {
+        #[command(subcommand)]
+        command: commands::edge::EdgeCommands,
+    },
     /// Manage tags
     #[command(visible_alias = "g")]
     Tag {
@@ -100,6 +106,9 @@ async fn async_main() -> color_eyre::Result<()> {
         }
         Some(Commands::Comment { command }) => {
             commands::comment::run(&pool, command, cli.json).await?;
+        }
+        Some(Commands::Edge { command }) => {
+            commands::edge::run(&pool, command, cli.json).await?;
         }
         Some(Commands::Tag { command }) => {
             commands::tag::run(&pool, command, cli.json).await?;

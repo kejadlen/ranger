@@ -66,6 +66,7 @@ The integration test (`tests/cli.rs`) exercises the full workflow via the compil
 - The `xdg` crate resolves `$XDG_DATA_HOME/ranger/ranger.db`. Override with `RANGER_DB` env var or `--db` flag.
 - Backlogs are identified by name, not key. `RANGER_DEFAULT_BACKLOG` sets the default for `--backlog` flags.
 - Migration uses `CREATE TABLE IF NOT EXISTS` so it's idempotent (safe to run on every connect).
+- SQLite doesn't support `ALTER TABLE DROP COLUMN` with foreign keys cleanly. When recreating a table, wrap in `PRAGMA foreign_keys = OFF/ON` to prevent `ON DELETE CASCADE` from wiping join tables (e.g. `task_tags`).
 
 ## VCS
 
