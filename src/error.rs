@@ -9,6 +9,8 @@ pub enum RangerError {
         task_state: String,
         anchor_state: String,
     },
+    #[error("backlog not found: '{0}'")]
+    BacklogNotFound(String),
     #[error("adding this edge would create a cycle")]
     CycleDetected,
     #[error("task already has an outgoing 'before' edge")]

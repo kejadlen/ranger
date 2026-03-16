@@ -28,7 +28,7 @@ pub async fn get_by_name(conn: &mut SqliteConnection, name: &str) -> Result<Back
     .bind(name)
     .fetch_optional(&mut *conn)
     .await?
-    .ok_or_else(|| RangerError::KeyNotFound(name.to_string()))?;
+    .ok_or_else(|| RangerError::BacklogNotFound(name.to_string()))?;
     Ok(backlog)
 }
 
