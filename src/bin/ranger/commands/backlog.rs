@@ -32,6 +32,13 @@ pub enum BacklogCommands {
         #[arg(long)]
         done: bool,
     },
+    /// Delete a backlog and all its tasks
+    #[command(visible_alias = "rm")]
+    Delete {
+        /// Backlog name
+        #[arg(add = ArgValueCompleter::new(completions::complete_backlog_names))]
+        name: String,
+    },
     /// Rebalance task positions in a backlog
     Rebalance {
         /// Backlog name
@@ -51,6 +58,10 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
         BacklogCommands::List => {
             let backlogs = ops::backlog::list(&mut conn).await?;
             output::print_list(&backlogs, json, print_backlog);
+        }
+        BacklogCommands::Delete { name } => {
+            let backlog = ops::backlog::delete(&mut conn, &name).await?;
+            output::print(&backlog, json, |b| println!("Deleted backlog: {}", b.name));
         }
         BacklogCommands::Rebalance { name } => {
             let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;

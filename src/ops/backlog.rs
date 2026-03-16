@@ -32,6 +32,15 @@ pub async fn get_by_name(conn: &mut SqliteConnection, name: &str) -> Result<Back
     Ok(backlog)
 }
 
+pub async fn delete(conn: &mut SqliteConnection, name: &str) -> Result<Backlog, RangerError> {
+    let backlog = get_by_name(&mut *conn, name).await?;
+    sqlx::query("DELETE FROM backlogs WHERE id = ?")
+        .bind(backlog.id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(backlog)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +80,26 @@ mod tests {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
         let result = get_by_name(&mut conn, "nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_backlog() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        create(&mut conn, "ToDelete").await.unwrap();
+        let deleted = delete(&mut conn, "ToDelete").await.unwrap();
+        assert_eq!(deleted.name, "ToDelete");
+
+        let result = get_by_name(&mut conn, "ToDelete").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_backlog_not_found() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let result = delete(&mut conn, "nonexistent").await;
         assert!(result.is_err());
     }
 }

@@ -421,6 +421,46 @@ fn full_workflow() {
     assert!(!stdout.contains("bug"));
     assert!(stdout.contains("frontend"));
 
+    // --- Backlog delete ---
+
+    // Create a throwaway backlog with a task, then delete it
+    ranger(db_path)
+        .args(["backlog", "create", "Throwaway"])
+        .output()
+        .unwrap();
+    ranger(db_path)
+        .args(["task", "create", "Doomed task", "--backlog", "Throwaway"])
+        .output()
+        .unwrap();
+    let output = ranger(db_path)
+        .args(["backlog", "delete", "Throwaway"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Deleted backlog: Throwaway"));
+
+    // Verify backlog is gone
+    let output = ranger(db_path)
+        .args(["backlog", "list", "--json"])
+        .output()
+        .unwrap();
+    let backlogs: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let names: Vec<&str> = backlogs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["name"].as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&"Throwaway"));
+
+    // Deleting non-existent backlog fails
+    let output = ranger(db_path)
+        .args(["backlog", "delete", "Nonexistent"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
     // Dynamic shell completions via COMPLETE env var
     for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
         let output = ranger(db_path).env("COMPLETE", shell).output().unwrap();
