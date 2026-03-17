@@ -1,8 +1,10 @@
 use crate::error::RangerError;
 use crate::key;
-use crate::models::{State, Task};
+use crate::models::{Ordering, State, Task};
+use crate::ops::edge;
 use crate::position;
 use sqlx::sqlite::SqliteConnection;
+use std::collections::HashMap;
 
 const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.backlog_id, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at";
 
@@ -61,6 +63,7 @@ pub async fn list(
     conn: &mut SqliteConnection,
     backlog_id: i64,
     filter: &ListFilter,
+    ordering: Ordering,
 ) -> Result<Vec<Task>, RangerError> {
     let archived_clause = if filter.include_archived {
         ""
@@ -74,11 +77,15 @@ pub async fn list(
         ""
     };
 
-    let tasks = if let Some(state) = &filter.state {
+    let order_clause = match ordering {
+        Ordering::Position => " ORDER BY position",
+        Ordering::Dag => " ORDER BY id",
+    };
+
+    let mut tasks = if let Some(state) = &filter.state {
         let query = format!(
             "SELECT {TASK_COLUMNS} FROM tasks{tag_join} \
-             WHERE backlog_id = ? AND state = ?{archived_clause} \
-             ORDER BY position"
+             WHERE backlog_id = ? AND state = ?{archived_clause}{order_clause}"
         );
         let mut q = sqlx::query_as::<_, Task>(&query);
         if let Some(tag) = &filter.tag {
@@ -91,8 +98,7 @@ pub async fn list(
     } else {
         let query = format!(
             "SELECT {TASK_COLUMNS} FROM tasks{tag_join} \
-             WHERE backlog_id = ?{archived_clause} \
-             ORDER BY position"
+             WHERE backlog_id = ?{archived_clause}{order_clause}"
         );
         let mut q = sqlx::query_as::<_, Task>(&query);
         if let Some(tag) = &filter.tag {
@@ -100,6 +106,20 @@ pub async fn list(
         }
         q.bind(backlog_id).fetch_all(&mut *conn).await?
     };
+
+    if ordering == Ordering::Dag {
+        let task_ids: Vec<i64> = tasks.iter().map(|t| t.id).collect();
+        let edges = edge::list_for_task_ids(&mut *conn, &task_ids).await?;
+        let sorted_ids = edge::ordered_ids(&task_ids, &edges);
+
+        let task_map: HashMap<i64, usize> = sorted_ids
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| (id, i))
+            .collect();
+        tasks.sort_by_key(|t| task_map.get(&t.id).copied().unwrap_or(usize::MAX));
+    }
+
     Ok(tasks)
 }
 
@@ -165,6 +185,7 @@ pub async fn edit(
     title: Option<&str>,
     description: Option<&str>,
     state: Option<State>,
+    ordering: Ordering,
 ) -> Result<Task, RangerError> {
     if let Some(title) = title {
         sqlx::query("UPDATE tasks SET title = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
@@ -194,7 +215,7 @@ pub async fn edit(
             .await?;
 
         if old_state != *new_state {
-            reorder(&mut *conn, task_id, &old_state, new_state).await?;
+            reorder(&mut *conn, task_id, &old_state, new_state, ordering).await?;
         }
     }
 
@@ -243,6 +264,7 @@ pub async fn move_task(
     conn: &mut SqliteConnection,
     task: &Task,
     placement: Placement<'_>,
+    ordering: Ordering,
 ) -> Result<(), RangerError> {
     for anchor in placement.anchors() {
         if anchor.state != task.state {
@@ -253,6 +275,17 @@ pub async fn move_task(
         }
     }
 
+    match ordering {
+        Ordering::Position => move_task_position(&mut *conn, task, &placement).await,
+        Ordering::Dag => move_task_dag(&mut *conn, task, &placement).await,
+    }
+}
+
+async fn move_task_position(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    placement: &Placement<'_>,
+) -> Result<(), RangerError> {
     let new_pos = match placement {
         Placement::After(anchor) => {
             let next =
@@ -272,11 +305,68 @@ pub async fn move_task(
     set_position(&mut *conn, task.id, &new_pos).await
 }
 
-/// Reorder a task's position when its state changes.
+async fn move_task_dag(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    placement: &Placement<'_>,
+) -> Result<(), RangerError> {
+    edge::splice_out_before(&mut *conn, task.id).await?;
+
+    match placement {
+        Placement::Before(anchor) => {
+            edge::insert_before_task(&mut *conn, task.id, anchor.id).await?;
+        }
+        Placement::After(anchor) => {
+            edge::insert_after_task(&mut *conn, task.id, anchor.id).await?;
+        }
+        Placement::Between { after, before } => {
+            // Remove direct edge between anchors if it exists
+            edge::remove(
+                &mut *conn,
+                after.id,
+                before.id,
+                crate::models::EdgeType::Before,
+            )
+            .await?;
+            // Insert: after → task → before
+            edge::add(
+                &mut *conn,
+                after.id,
+                task.id,
+                crate::models::EdgeType::Before,
+            )
+            .await?;
+            edge::add(
+                &mut *conn,
+                task.id,
+                before.id,
+                crate::models::EdgeType::Before,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Reorder a task when its state changes.
 ///
 /// Moving up (toward done): place at end of target state group.
 /// Moving down (toward icebox): place at beginning of target state group.
 async fn reorder(
+    conn: &mut SqliteConnection,
+    task_id: i64,
+    old_state: &State,
+    new_state: &State,
+    ordering: Ordering,
+) -> Result<(), RangerError> {
+    match ordering {
+        Ordering::Position => reorder_position(&mut *conn, task_id, old_state, new_state).await,
+        Ordering::Dag => reorder_dag(&mut *conn, task_id, old_state, new_state).await,
+    }
+}
+
+async fn reorder_position(
     conn: &mut SqliteConnection,
     task_id: i64,
     old_state: &State,
@@ -320,6 +410,76 @@ async fn reorder(
     };
 
     set_position(&mut *conn, task_id, &new_pos).await
+}
+
+async fn reorder_dag(
+    conn: &mut SqliteConnection,
+    task_id: i64,
+    _old_state: &State,
+    new_state: &State,
+) -> Result<(), RangerError> {
+    let backlog_id: i64 = sqlx::query_scalar("SELECT backlog_id FROM tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_one(&mut *conn)
+        .await?;
+
+    // Remove the task from its old before-edge chains
+    edge::splice_out_before(&mut *conn, task_id).await?;
+
+    // Find tasks in the target state to determine placement
+    let target_tasks: Vec<Task> = {
+        let query = format!(
+            "SELECT {TASK_COLUMNS} FROM tasks \
+             WHERE backlog_id = ? AND state = ? AND id != ? \
+             ORDER BY id"
+        );
+        sqlx::query_as::<_, Task>(&query)
+            .bind(backlog_id)
+            .bind(new_state.as_str())
+            .bind(task_id)
+            .fetch_all(&mut *conn)
+            .await?
+    };
+
+    if target_tasks.is_empty() {
+        return Ok(());
+    }
+
+    let task_ids: Vec<i64> = target_tasks.iter().map(|t| t.id).collect();
+    let edges = edge::list_for_task_ids(&mut *conn, &task_ids).await?;
+    let before_edge_type = crate::models::EdgeType::Before;
+
+    // Find roots (no incoming before) and leaves (no outgoing before) within the state
+    let has_incoming: std::collections::HashSet<i64> = edges
+        .iter()
+        .filter(|e| e.edge_type == before_edge_type && task_ids.contains(&e.from_task_id))
+        .map(|e| e.to_task_id)
+        .collect();
+    let has_outgoing: std::collections::HashSet<i64> = edges
+        .iter()
+        .filter(|e| e.edge_type == before_edge_type && task_ids.contains(&e.to_task_id))
+        .map(|e| e.from_task_id)
+        .collect();
+
+    let moving_up = new_state.rank() > _old_state.rank();
+
+    if moving_up {
+        // Place at end: add leaf → task for every leaf (no outgoing before)
+        for &id in &task_ids {
+            if !has_outgoing.contains(&id) {
+                edge::add(&mut *conn, id, task_id, before_edge_type.clone()).await?;
+            }
+        }
+    } else {
+        // Place at beginning: add task → root for every root (no incoming before)
+        for &id in &task_ids {
+            if !has_incoming.contains(&id) {
+                edge::add(&mut *conn, task_id, id, before_edge_type.clone()).await?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // -- Position query helpers --
@@ -449,6 +609,7 @@ pub async fn rebalance(conn: &mut SqliteConnection, backlog_id: i64) -> Result<u
             include_archived: true,
             ..Default::default()
         },
+        Ordering::Position,
     )
     .await?;
     let positions = position::spread(tasks.len());
@@ -545,7 +706,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(tasks.len(), 3);
@@ -589,6 +750,7 @@ mod tests {
                 state: Some(State::Icebox),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -602,6 +764,7 @@ mod tests {
                 state: Some(State::Queued),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -655,6 +818,7 @@ mod tests {
             Some("Updated"),
             Some("A description"),
             Some(State::Queued),
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -686,7 +850,7 @@ mod tests {
         let result = get_by_key_prefix(&mut conn, &task.key, None).await;
         assert!(result.is_err());
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(tasks.len(), 0);
@@ -788,9 +952,16 @@ mod tests {
         .await
         .unwrap();
 
-        let updated = edit(&mut conn, task.id, Some("New title"), None, None)
-            .await
-            .unwrap();
+        let updated = edit(
+            &mut conn,
+            task.id,
+            Some("New title"),
+            None,
+            None,
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
         assert_eq!(updated.title, "New title");
         assert_eq!(updated.state, State::Icebox);
     }
@@ -824,11 +995,11 @@ mod tests {
         .unwrap();
 
         // Move first task after second
-        move_task(&mut conn, &t1, Placement::After(&t2))
+        move_task(&mut conn, &t1, Placement::After(&t2), Ordering::Position)
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(tasks[0].id, t2.id);
@@ -874,11 +1045,11 @@ mod tests {
         .await
         .unwrap();
 
-        move_task(&mut conn, &t3, Placement::Before(&t1))
+        move_task(&mut conn, &t3, Placement::Before(&t1), Ordering::Position)
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(tasks[0].id, t3.id);
@@ -925,11 +1096,11 @@ mod tests {
         .await
         .unwrap();
 
-        move_task(&mut conn, &t1, Placement::After(&t3))
+        move_task(&mut conn, &t1, Placement::After(&t3), Ordering::Position)
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(tasks[0].id, t2.id);
@@ -983,11 +1154,12 @@ mod tests {
                 after: &t1,
                 before: &t2,
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(tasks[0].id, t1.id);
@@ -1023,9 +1195,14 @@ mod tests {
         .await
         .unwrap();
 
-        let err = move_task(&mut conn, &queued, Placement::Before(&done))
-            .await
-            .unwrap_err();
+        let err = move_task(
+            &mut conn,
+            &queued,
+            Placement::Before(&done),
+            Ordering::Position,
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("queued"));
         assert!(err.to_string().contains("done"));
     }
@@ -1072,9 +1249,16 @@ mod tests {
         .unwrap();
 
         // Move queued task to done — should land after Done 2
-        let updated = edit(&mut conn, q1.id, None, None, Some(State::Done))
-            .await
-            .unwrap();
+        let updated = edit(
+            &mut conn,
+            q1.id,
+            None,
+            None,
+            Some(State::Done),
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
         assert_eq!(updated.state, State::Done);
 
         let done = list(
@@ -1084,6 +1268,7 @@ mod tests {
                 state: Some(State::Done),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -1138,9 +1323,16 @@ mod tests {
         .unwrap();
 
         // Move in_progress task to queued — should land before Queued 1
-        let updated = edit(&mut conn, ip.id, None, None, Some(State::Queued))
-            .await
-            .unwrap();
+        let updated = edit(
+            &mut conn,
+            ip.id,
+            None,
+            None,
+            Some(State::Queued),
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
         assert_eq!(updated.state, State::Queued);
 
         let queued = list(
@@ -1150,6 +1342,7 @@ mod tests {
                 state: Some(State::Queued),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -1194,9 +1387,16 @@ mod tests {
         let original_pos = t1.position.clone();
 
         // Edit to same state — position should not change
-        let updated = edit(&mut conn, t1.id, None, None, Some(State::Queued))
-            .await
-            .unwrap();
+        let updated = edit(
+            &mut conn,
+            t1.id,
+            None,
+            None,
+            Some(State::Queued),
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
         assert_eq!(updated.position, original_pos);
 
         let queued = list(
@@ -1206,6 +1406,7 @@ mod tests {
                 state: Some(State::Queued),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -1232,9 +1433,16 @@ mod tests {
         .unwrap();
 
         // Move to done (empty group) — should succeed
-        let updated = edit(&mut conn, t1.id, None, None, Some(State::Done))
-            .await
-            .unwrap();
+        let updated = edit(
+            &mut conn,
+            t1.id,
+            None,
+            None,
+            Some(State::Done),
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
         assert_eq!(updated.state, State::Done);
 
         let done = list(
@@ -1244,6 +1452,7 @@ mod tests {
                 state: Some(State::Done),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -1270,9 +1479,16 @@ mod tests {
         .unwrap();
 
         // Move to icebox (empty group) — should succeed
-        let updated = edit(&mut conn, t1.id, None, None, Some(State::Icebox))
-            .await
-            .unwrap();
+        let updated = edit(
+            &mut conn,
+            t1.id,
+            None,
+            None,
+            Some(State::Icebox),
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
         assert_eq!(updated.state, State::Icebox);
 
         let icebox = list(
@@ -1282,6 +1498,7 @@ mod tests {
                 state: Some(State::Icebox),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -1310,17 +1527,18 @@ mod tests {
             .unwrap();
         }
 
-        let before: Vec<String> = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap()
-            .iter()
-            .map(|t| t.position.clone())
-            .collect();
+        let before: Vec<String> =
+            list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
+                .await
+                .unwrap()
+                .iter()
+                .map(|t| t.position.clone())
+                .collect();
 
         let count = rebalance(&mut conn, bl.id).await.unwrap();
         assert_eq!(count, 3);
 
-        let after = list(&mut conn, bl.id, &ListFilter::default())
+        let after = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         let after_positions: Vec<String> = after.iter().map(|t| t.position.clone()).collect();
@@ -1423,7 +1641,7 @@ mod tests {
         assert!(archived.archived);
 
         // Default list excludes archived
-        let visible = list(&mut conn, bl.id, &ListFilter::default())
+        let visible = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(visible.len(), 1);
@@ -1437,6 +1655,7 @@ mod tests {
                 include_archived: true,
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
@@ -1446,7 +1665,7 @@ mod tests {
         let restored = set_archived(&mut conn, t2.id, false).await.unwrap();
         assert!(!restored.archived);
 
-        let visible = list(&mut conn, bl.id, &ListFilter::default())
+        let visible = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Position)
             .await
             .unwrap();
         assert_eq!(visible.len(), 2);
@@ -1490,10 +1709,740 @@ mod tests {
                 tag: Some("bug".to_string()),
                 ..Default::default()
             },
+            Ordering::Position,
         )
         .await
         .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Tagged queued");
+    }
+
+    // ---- DAG ordering tests ----
+
+    #[tokio::test]
+    async fn dag_list_orders_by_id_with_no_edges() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Dag)
+            .await
+            .unwrap();
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0].id, t1.id);
+        assert_eq!(tasks[1].id, t2.id);
+        assert_eq!(tasks[2].id, t3.id);
+    }
+
+    #[tokio::test]
+    async fn dag_list_respects_before_edges() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // t3 should come before t1 (override natural id order)
+        crate::ops::edge::add(&mut conn, t3.id, t1.id, crate::models::EdgeType::Before)
+            .await
+            .unwrap();
+
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Dag)
+            .await
+            .unwrap();
+        assert_eq!(tasks[0].id, t2.id, "t2 has lowest id, no constraints");
+        assert_eq!(tasks[1].id, t3.id, "t3 before t1 by edge");
+        assert_eq!(tasks[2].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn dag_move_before() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Move t2 before t1
+        move_task(&mut conn, &t2, Placement::Before(&t1), Ordering::Dag)
+            .await
+            .unwrap();
+
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Dag)
+            .await
+            .unwrap();
+        assert_eq!(tasks[0].id, t2.id);
+        assert_eq!(tasks[1].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn dag_move_after() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Move t1 after t3 (t1 is normally first by id)
+        move_task(&mut conn, &t1, Placement::After(&t3), Ordering::Dag)
+            .await
+            .unwrap();
+
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Dag)
+            .await
+            .unwrap();
+        assert_eq!(tasks[0].id, t2.id);
+        assert_eq!(tasks[1].id, t3.id);
+        assert_eq!(tasks[2].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn dag_move_between() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Set up chain: t1 → t2
+        crate::ops::edge::add(&mut conn, t1.id, t2.id, crate::models::EdgeType::Before)
+            .await
+            .unwrap();
+
+        // Move t3 between t1 and t2
+        move_task(
+            &mut conn,
+            &t3,
+            Placement::Between {
+                after: &t1,
+                before: &t2,
+            },
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Dag)
+            .await
+            .unwrap();
+        assert_eq!(tasks[0].id, t1.id);
+        assert_eq!(tasks[1].id, t3.id);
+        assert_eq!(tasks[2].id, t2.id);
+    }
+
+    #[tokio::test]
+    async fn dag_move_rejects_cross_state() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let queued = create(
+            &mut conn,
+            CreateTask {
+                title: "Q",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let done = create(
+            &mut conn,
+            CreateTask {
+                title: "D",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let err = move_task(&mut conn, &queued, Placement::Before(&done), Ordering::Dag)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("queued"));
+        assert!(err.to_string().contains("done"));
+    }
+
+    #[tokio::test]
+    async fn dag_state_change_up_places_at_end() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let d1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Done 1",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let d2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Done 2",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let q1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 1",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let updated = edit(
+            &mut conn,
+            q1.id,
+            None,
+            None,
+            Some(State::Done),
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.state, State::Done);
+
+        let done = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Done),
+                ..Default::default()
+            },
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(done.len(), 3);
+        assert_eq!(done[0].id, d1.id);
+        assert_eq!(done[1].id, d2.id);
+        assert_eq!(done[2].id, q1.id, "newly done task should be at end");
+    }
+
+    #[tokio::test]
+    async fn dag_state_change_down_places_at_beginning() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let q1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 1",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let q2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 2",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let ip = create(
+            &mut conn,
+            CreateTask {
+                title: "In Progress",
+                backlog_id: bl.id,
+                state: Some(State::InProgress),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let updated = edit(
+            &mut conn,
+            ip.id,
+            None,
+            None,
+            Some(State::Queued),
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.state, State::Queued);
+
+        let queued = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Queued),
+                ..Default::default()
+            },
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(queued.len(), 3);
+        assert_eq!(queued[0].id, ip.id, "demoted task should be at beginning");
+        assert_eq!(queued[1].id, q1.id);
+        assert_eq!(queued[2].id, q2.id);
+    }
+
+    #[tokio::test]
+    async fn dag_state_change_to_empty_group() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let updated = edit(
+            &mut conn,
+            t1.id,
+            None,
+            None,
+            Some(State::Done),
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.state, State::Done);
+
+        let done = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Done),
+                ..Default::default()
+            },
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].id, t1.id);
+    }
+
+    #[tokio::test]
+    async fn dag_state_change_same_state_is_noop() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let updated = edit(
+            &mut conn,
+            t1.id,
+            None,
+            None,
+            Some(State::Queued),
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.state, State::Queued);
+
+        // No edges should have been created
+        let edges = crate::ops::edge::list_all(&mut conn).await.unwrap();
+        assert!(edges.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dag_state_change_up_into_group_with_existing_edges() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        // Done tasks with an existing chain: d1 → d2
+        let d1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Done 1",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let d2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Done 2",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        crate::ops::edge::add(&mut conn, d1.id, d2.id, crate::models::EdgeType::Before)
+            .await
+            .unwrap();
+
+        // Queued task to promote
+        let q1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 1",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        edit(
+            &mut conn,
+            q1.id,
+            None,
+            None,
+            Some(State::Done),
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+
+        let done = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Done),
+                ..Default::default()
+            },
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        // d1 → d2 chain, q1 added after d2 (d2 is the only leaf)
+        assert_eq!(done.len(), 3);
+        assert_eq!(done[0].id, d1.id);
+        assert_eq!(done[1].id, d2.id);
+        assert_eq!(done[2].id, q1.id);
+    }
+
+    #[tokio::test]
+    async fn dag_state_change_down_into_group_with_existing_edges() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        // Queued tasks with an existing chain: q1 → q2
+        let q1 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 1",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let q2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued 2",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        crate::ops::edge::add(&mut conn, q1.id, q2.id, crate::models::EdgeType::Before)
+            .await
+            .unwrap();
+
+        // In-progress task to demote
+        let ip = create(
+            &mut conn,
+            CreateTask {
+                title: "IP",
+                backlog_id: bl.id,
+                state: Some(State::InProgress),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        edit(
+            &mut conn,
+            ip.id,
+            None,
+            None,
+            Some(State::Queued),
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+
+        let queued = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Queued),
+                ..Default::default()
+            },
+            Ordering::Dag,
+        )
+        .await
+        .unwrap();
+        // ip added before q1 (q1 is the only root), chain: ip → q1 → q2
+        assert_eq!(queued.len(), 3);
+        assert_eq!(queued[0].id, ip.id);
+        assert_eq!(queued[1].id, q1.id);
+        assert_eq!(queued[2].id, q2.id);
+    }
+
+    #[tokio::test]
+    async fn dag_move_splices_out_of_old_chain() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "A",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "B",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "C",
+                backlog_id: bl.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Chain: t1 → t2 → t3
+        crate::ops::edge::add(&mut conn, t1.id, t2.id, crate::models::EdgeType::Before)
+            .await
+            .unwrap();
+        crate::ops::edge::add(&mut conn, t2.id, t3.id, crate::models::EdgeType::Before)
+            .await
+            .unwrap();
+
+        // Move t2 after t3 — should splice out and re-chain t1 → t3
+        move_task(&mut conn, &t2, Placement::After(&t3), Ordering::Dag)
+            .await
+            .unwrap();
+
+        let tasks = list(&mut conn, bl.id, &ListFilter::default(), Ordering::Dag)
+            .await
+            .unwrap();
+        assert_eq!(tasks[0].id, t1.id);
+        assert_eq!(tasks[1].id, t3.id);
+        assert_eq!(tasks[2].id, t2.id);
     }
 }

@@ -7,6 +7,7 @@ use ranger::models::{Backlog, State};
 use ranger::ops;
 use ranger::ops::task::ListFilter;
 
+use super::task::resolve_ordering;
 use crate::completions;
 use crate::output;
 
@@ -49,6 +50,7 @@ pub enum BacklogCommands {
 
 pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Result<()> {
     let mut conn = pool.acquire().await?;
+    let ordering = resolve_ordering();
 
     match command {
         BacklogCommands::Create { name } => {
@@ -84,7 +86,7 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                         state: Some(state.clone()),
                         ..Default::default()
                     };
-                    let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
+                    let tasks = ops::task::list(&mut conn, backlog.id, &filter, ordering).await?;
                     if !tasks.is_empty() {
                         state_groups
                             .insert(state.to_string(), serde_json::to_value(&tasks).unwrap());
@@ -106,7 +108,7 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
                         state: Some(state.clone()),
                         ..Default::default()
                     };
-                    let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
+                    let tasks = ops::task::list(&mut conn, backlog.id, &filter, ordering).await?;
                     if !tasks.is_empty() {
                         println!("\n[{}]", state);
                         for t in &tasks {

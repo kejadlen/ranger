@@ -13,8 +13,6 @@ pub enum RangerError {
     BacklogNotFound(String),
     #[error("adding this edge would create a cycle")]
     CycleDetected,
-    #[error("task already has an outgoing 'before' edge")]
-    DuplicateBeforeEdge,
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("migration error: {0}")]

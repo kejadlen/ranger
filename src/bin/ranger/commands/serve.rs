@@ -4,12 +4,14 @@ use axum::response::{IntoResponse, Redirect};
 use axum::{Router, routing::get};
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 use ranger::key;
-use ranger::models::Task;
+use ranger::models::{Ordering, Task};
 use ranger::ops;
 use ranger::ops::task::ListFilter;
 use sqlx::SqlitePool;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+
+use super::task::resolve_ordering;
 
 /// Static CSS embedded at compile time from `static/style.css`.
 const STYLE_CSS: &str = include_str!("../../../../static/style.css");
@@ -18,6 +20,7 @@ const STYLE_CSS: &str = include_str!("../../../../static/style.css");
 struct AppState {
     pool: SqlitePool,
     default_backlog: Option<String>,
+    ordering: Ordering,
 }
 
 pub async fn run(
@@ -28,6 +31,7 @@ pub async fn run(
     let state = AppState {
         pool: pool.clone(),
         default_backlog,
+        ordering: resolve_ordering(),
     };
 
     let app = Router::new()
@@ -118,7 +122,7 @@ async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Resul
             state: Some(s.clone()),
             ..Default::default()
         };
-        let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
+        let tasks = ops::task::list(&mut conn, backlog.id, &filter, state.ordering).await?;
         let views = to_task_views(&tasks, &prefixes, &mut conn).await?;
         match s {
             ranger::models::State::InProgress => in_progress = views,

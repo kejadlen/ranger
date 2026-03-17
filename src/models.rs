@@ -3,6 +3,16 @@ use sqlx::FromRow;
 
 use crate::timestamp::Timestamp;
 
+/// Controls how tasks are ordered within a backlog/state group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ordering {
+    /// Lexicographic position strings (legacy).
+    #[default]
+    Position,
+    /// DAG topological sort using `before` edges, with task ID as tiebreaker.
+    Dag,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
