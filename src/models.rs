@@ -22,7 +22,7 @@ impl State {
         }
     }
 
-    /// Numeric rank following the natural flow: icebox(0) → queued(1) → in_progress(2) → done(3).
+    /// Numeric rank following the natural flow: icebox(0) → ready(1) → in_progress(2) → done(3).
     pub fn rank(&self) -> u8 {
         match self {
             State::Icebox => 0,
@@ -42,7 +42,7 @@ impl std::str::FromStr for State {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "icebox" => Ok(State::Icebox),
-            "ready" | "queued" => Ok(State::Ready),
+            "ready" => Ok(State::Ready),
             "in_progress" => Ok(State::InProgress),
             "done" => Ok(State::Done),
             _ => Err(InvalidStateError(s.to_string())),
@@ -132,12 +132,6 @@ mod tests {
             let parsed: State = expected.parse().unwrap();
             assert_eq!(parsed.as_str(), expected);
         }
-    }
-
-    #[test]
-    fn queued_parses_as_ready() {
-        let parsed: State = "queued".parse().unwrap();
-        assert_eq!(parsed, State::Ready);
     }
 
     #[test]

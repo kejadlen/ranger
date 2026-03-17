@@ -77,7 +77,7 @@ pub enum TaskCommands {
         /// Task description
         #[arg(long)]
         description: Option<String>,
-        /// Initial state (icebox, queued, in_progress, done)
+        /// Initial state (icebox, ready, in_progress, done)
         #[arg(long)]
         state: Option<String>,
         #[command(flatten)]

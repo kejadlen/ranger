@@ -595,7 +595,7 @@ mod tests {
         create(
             &mut conn,
             CreateTask {
-                title: "Queued task",
+                title: "Ready task",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(icebox.len(), 1);
         assert_eq!(icebox[0].title, "Icebox task");
 
-        let queued = list(
+        let ready = list(
             &mut conn,
             bl.id,
             &ListFilter {
@@ -627,8 +627,8 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0].title, "Queued task");
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].title, "Ready task");
     }
 
     #[tokio::test]
@@ -1022,7 +1022,7 @@ mod tests {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
         let bl = backlog::create(&mut conn, "Test").await.unwrap();
-        let queued = create(
+        let ready = create(
             &mut conn,
             CreateTask {
                 title: "Q",
@@ -1045,7 +1045,7 @@ mod tests {
         .await
         .unwrap();
 
-        let err = move_task(&mut conn, &queued, Placement::Before(&done))
+        let err = move_task(&mut conn, &ready, Placement::Before(&done))
             .await
             .unwrap_err();
         assert!(err.to_string().contains("ready"));
@@ -1058,7 +1058,7 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
-        // Create two done tasks and one queued task
+        // Create two done tasks and one ready task
         let d1 = create(
             &mut conn,
             CreateTask {
@@ -1084,7 +1084,7 @@ mod tests {
         let q1 = create(
             &mut conn,
             CreateTask {
-                title: "Queued 1",
+                title: "Ready 1",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -1093,7 +1093,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Move queued task to done — should land after Done 2
+        // Move ready task to done — should land after Done 2
         let updated = edit(&mut conn, q1.id, None, None, Some(State::Done))
             .await
             .unwrap();
@@ -1124,11 +1124,11 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
-        // Create two queued tasks and one in_progress task
+        // Create two ready tasks and one in_progress task
         let q1 = create(
             &mut conn,
             CreateTask {
-                title: "Queued 1",
+                title: "Ready 1",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -1139,7 +1139,7 @@ mod tests {
         let q2 = create(
             &mut conn,
             CreateTask {
-                title: "Queued 2",
+                title: "Ready 2",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -1159,13 +1159,13 @@ mod tests {
         .await
         .unwrap();
 
-        // Move in_progress task to queued — should land before Queued 1
+        // Move in_progress task to ready — should land before Ready 1
         let updated = edit(&mut conn, ip.id, None, None, Some(State::Ready))
             .await
             .unwrap();
         assert_eq!(updated.state, State::Ready);
 
-        let queued = list(
+        let ready = list(
             &mut conn,
             bl.id,
             &ListFilter {
@@ -1175,13 +1175,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(queued.len(), 3);
+        assert_eq!(ready.len(), 3);
         assert_eq!(
-            queued[0].id, ip.id,
-            "demoted task should be at beginning of queued group"
+            ready[0].id, ip.id,
+            "demoted task should be at beginning of ready group"
         );
-        assert_eq!(queued[1].id, q1.id);
-        assert_eq!(queued[2].id, q2.id);
+        assert_eq!(ready[1].id, q1.id);
+        assert_eq!(ready[2].id, q2.id);
     }
 
     #[tokio::test]
@@ -1221,7 +1221,7 @@ mod tests {
             .unwrap();
         assert_eq!(updated.position, original_pos);
 
-        let queued = list(
+        let ready = list(
             &mut conn,
             bl.id,
             &ListFilter {
@@ -1231,8 +1231,8 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(queued[0].id, t1.id);
-        assert_eq!(queued[1].id, t2.id);
+        assert_eq!(ready[0].id, t1.id);
+        assert_eq!(ready[1].id, t2.id);
     }
 
     #[tokio::test]
@@ -1244,7 +1244,7 @@ mod tests {
         let t1 = create(
             &mut conn,
             CreateTask {
-                title: "Queued task",
+                title: "Ready task",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -1482,7 +1482,7 @@ mod tests {
         let t1 = create(
             &mut conn,
             CreateTask {
-                title: "Tagged queued",
+                title: "Tagged ready",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -1493,7 +1493,7 @@ mod tests {
         create(
             &mut conn,
             CreateTask {
-                title: "Untagged queued",
+                title: "Untagged ready",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -1516,7 +1516,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Tagged queued");
+        assert_eq!(results[0].title, "Tagged ready");
     }
 
     // ---- done_at tests ----
@@ -1551,7 +1551,7 @@ mod tests {
         let task = create(
             &mut conn,
             CreateTask {
-                title: "Queued task",
+                title: "Ready task",
                 backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
@@ -1628,7 +1628,7 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
-        // Create three queued tasks
+        // Create three ready tasks
         let t1 = create(
             &mut conn,
             CreateTask {

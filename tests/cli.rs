@@ -35,7 +35,7 @@ fn full_workflow() {
 
     // Create tasks (using RANGER_DEFAULT_BACKLOG)
     let output = ranger(db_path)
-        .args(["task", "create", "First task", "--state", "queued"])
+        .args(["task", "create", "First task", "--state", "ready"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -95,33 +95,33 @@ fn full_workflow() {
     let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(detail["task"]["title"], "Second task");
 
-    // Create two queued tasks and use edit --before to reposition within the same state
+    // Create two ready tasks and use edit --before to reposition within the same state
     let output = ranger(db_path)
-        .args(["task", "create", "Third task", "--state", "queued"])
+        .args(["task", "create", "Third task", "--state", "ready"])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     let output = ranger(db_path)
-        .args(["task", "create", "Fourth task", "--state", "queued"])
+        .args(["task", "create", "Fourth task", "--state", "ready"])
         .output()
         .unwrap();
     assert!(output.status.success());
 
     let output = ranger(db_path)
-        .args(["task", "list", "--json", "--state", "queued"])
+        .args(["task", "list", "--json", "--state", "ready"])
         .output()
         .unwrap();
-    let queued_tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let queued_tasks = queued_tasks.as_array().unwrap();
-    let t3_key = queued_tasks
+    let ready_tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let ready_tasks = ready_tasks.as_array().unwrap();
+    let t3_key = ready_tasks
         .iter()
         .find(|t| t["title"] == "Third task")
         .unwrap()["key"]
         .as_str()
         .unwrap()
         .to_string();
-    let t4_key = queued_tasks
+    let t4_key = ready_tasks
         .iter()
         .find(|t| t["title"] == "Fourth task")
         .unwrap()["key"]
@@ -146,14 +146,14 @@ fn full_workflow() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Fourth task (edited)"));
 
-    // Verify ordering within queued: Fourth should now be before Third
+    // Verify ordering within ready: Fourth should now be before Third
     let output = ranger(db_path)
-        .args(["task", "list", "--json", "--state", "queued"])
+        .args(["task", "list", "--json", "--state", "ready"])
         .output()
         .unwrap();
-    let queued_after: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let queued_after = queued_after.as_array().unwrap();
-    let titles: Vec<&str> = queued_after
+    let ready_after: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let ready_after = ready_after.as_array().unwrap();
+    let titles: Vec<&str> = ready_after
         .iter()
         .map(|t| t["title"].as_str().unwrap())
         .collect();

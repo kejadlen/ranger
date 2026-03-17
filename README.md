@@ -58,7 +58,7 @@ cargo run --bin ranger -- <command>
 ```
 ranger backlog create "my-project"
 ranger task create "First thing to do" --backlog my-project
-ranger task create "Second thing" --backlog my-project --state queued --tag urgent
+ranger task create "Second thing" --backlog my-project --state ready --tag urgent
 ranger task list --backlog my-project
 ranger task edit <key> --state in_progress
 ranger comment add <key> "Started working on this"
