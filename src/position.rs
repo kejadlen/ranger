@@ -93,6 +93,13 @@ mod tests {
     }
 
     #[test]
+    fn between_shared_prefix() {
+        let pos = between("ma", "mz");
+        assert!(*pos > *"ma", "expected {pos} > ma");
+        assert!(*pos < *"mz", "expected {pos} < mz");
+    }
+
+    #[test]
     fn between_adjacent() {
         let pos = between("a", "b");
         assert!(*pos > *"a", "expected {pos} > a");

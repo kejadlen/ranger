@@ -155,4 +155,24 @@ mod tests {
             .collect();
         assert_eq!(baks.len(), 1, "should create exactly one backup file");
     }
+
+    #[tokio::test]
+    async fn no_backup_when_already_up_to_date() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // First connect runs all migrations
+        let pool = connect(&db_path).await.unwrap();
+        pool.close().await;
+
+        // Second connect — all migrations already applied, no backup
+        let _pool2 = connect(&db_path).await.unwrap();
+
+        let baks: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "bak"))
+            .collect();
+        assert!(baks.is_empty(), "up-to-date DB should not create a backup");
+    }
 }
