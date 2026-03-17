@@ -42,7 +42,7 @@ impl std::str::FromStr for State {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "icebox" => Ok(State::Icebox),
-            "queued" => Ok(State::Queued),
+            "queued" | "ready" => Ok(State::Queued),
             "in_progress" => Ok(State::InProgress),
             "done" => Ok(State::Done),
             _ => Err(InvalidStateError(s.to_string())),
@@ -132,6 +132,12 @@ mod tests {
             let parsed: State = expected.parse().unwrap();
             assert_eq!(parsed.as_str(), expected);
         }
+    }
+
+    #[test]
+    fn ready_parses_as_queued() {
+        let parsed: State = "ready".parse().unwrap();
+        assert_eq!(parsed, State::Queued);
     }
 
     #[test]
