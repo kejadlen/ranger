@@ -7,8 +7,11 @@ use clap_complete::engine::ArgValueCompleter;
 use std::path::PathBuf;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+/// Build-time version set by build.rs (dev) or release workflow.
+const VERSION: &str = env!("RANGER_VERSION");
+
 #[derive(Parser)]
-#[command(name = "ranger", about = "Personal task tracker")]
+#[command(name = "ranger", version = VERSION, about = "Personal task tracker")]
 struct Cli {
     /// Output as JSON
     #[arg(long, global = true)]

@@ -29,6 +29,8 @@ jobs:
           echo "version=${CALVER}+${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build
+        env:
+          RANGER_VERSION: ${{ steps.version.outputs.version }}
         run: |
           cargo build --release
           tar -czf ranger-aarch64-apple-darwin.tar.gz -C target/release ranger

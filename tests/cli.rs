@@ -498,4 +498,12 @@ fn full_workflow() {
         stdout.contains("Ranger"),
         "backlog name completions should include backlog names"
     );
+
+    // --version prints version string
+    ranger(db_path)
+        .args(["--version"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("ranger "))
+        .stdout(predicates::str::is_match(r"ranger \S+").unwrap());
 }
