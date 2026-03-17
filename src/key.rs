@@ -1,20 +1,16 @@
 use crate::error::RangerError;
-use rand::Rng;
+use rand::random;
 
-/// jj-style alphabet for pronounceable keys.
-const ALPHABET: &[char] = &[
-    'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-];
-
-const KEY_LENGTH: usize = 16;
-
+/// Generate a 16-character key using the alphabet `k-z` (shifted hex).
+///
+/// A random u64 provides 64 bits of entropy. Each nibble (4 bits, 0–15)
+/// maps to one of the 16 characters `k` through `z`.
 pub fn generate_key() -> String {
-    let mut rng = rand::thread_rng();
-    (0..KEY_LENGTH)
-        .map(|_| {
-            let idx = rng.gen_range(0..ALPHABET.len());
-            ALPHABET[idx]
-        })
+    let bytes: [u8; 8] = random();
+    bytes
+        .iter()
+        .flat_map(|b| [b >> 4, b & 0x0f])
+        .map(|nibble| (b'k' + nibble) as char)
         .collect()
 }
 
@@ -56,7 +52,7 @@ mod tests {
     #[test]
     fn generated_key_has_correct_length() {
         let key = generate_key();
-        assert_eq!(key.len(), KEY_LENGTH);
+        assert_eq!(key.len(), 16);
     }
 
     #[test]
@@ -64,7 +60,7 @@ mod tests {
         let key = generate_key();
         for ch in key.chars() {
             assert!(
-                ALPHABET.contains(&ch),
+                ('k'..='z').contains(&ch),
                 "key contains invalid character: {ch}"
             );
         }
