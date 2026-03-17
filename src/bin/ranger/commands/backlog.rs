@@ -74,7 +74,7 @@ pub async fn run(pool: &SqlitePool, command: BacklogCommands, json: bool) -> Res
             let states: Vec<State> = if done {
                 vec![State::Done]
             } else {
-                vec![State::InProgress, State::Queued, State::Icebox]
+                vec![State::InProgress, State::Ready, State::Icebox]
             };
 
             if json {

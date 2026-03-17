@@ -259,7 +259,7 @@ fn full_workflow() {
     // Should show task state sections
     assert!(
         stdout.contains("[in_progress]")
-            || stdout.contains("[queued]")
+            || stdout.contains("[ready]")
             || stdout.contains("[icebox]")
     );
 
@@ -333,10 +333,7 @@ fn full_workflow() {
         !stdout.contains("[in_progress]"),
         "--done should not show in_progress"
     );
-    assert!(
-        !stdout.contains("[queued]"),
-        "--done should not show queued"
-    );
+    assert!(!stdout.contains("[ready]"), "--done should not show ready");
     assert!(
         !stdout.contains("[icebox]"),
         "--done should not show icebox"
@@ -350,7 +347,7 @@ fn full_workflow() {
     assert!(output.status.success());
     let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(detail["tasks"]["done"].is_array());
-    assert!(detail["tasks"]["queued"].is_null());
+    assert!(detail["tasks"]["ready"].is_null());
     assert!(detail["tasks"]["in_progress"].is_null());
 
     // Backlog show JSON without --done excludes done tasks

@@ -7,7 +7,7 @@ use crate::timestamp::Timestamp;
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Icebox,
-    Queued,
+    Ready,
     InProgress,
     Done,
 }
@@ -16,7 +16,7 @@ impl State {
     pub fn as_str(&self) -> &'static str {
         match self {
             State::Icebox => "icebox",
-            State::Queued => "queued",
+            State::Ready => "ready",
             State::InProgress => "in_progress",
             State::Done => "done",
         }
@@ -26,7 +26,7 @@ impl State {
     pub fn rank(&self) -> u8 {
         match self {
             State::Icebox => 0,
-            State::Queued => 1,
+            State::Ready => 1,
             State::InProgress => 2,
             State::Done => 3,
         }
@@ -42,7 +42,7 @@ impl std::str::FromStr for State {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "icebox" => Ok(State::Icebox),
-            "queued" | "ready" => Ok(State::Queued),
+            "ready" | "queued" => Ok(State::Ready),
             "in_progress" => Ok(State::InProgress),
             "done" => Ok(State::Done),
             _ => Err(InvalidStateError(s.to_string())),
@@ -123,7 +123,7 @@ mod tests {
     fn state_roundtrips_through_display_and_parse() {
         for (state, expected) in [
             (State::Icebox, "icebox"),
-            (State::Queued, "queued"),
+            (State::Ready, "ready"),
             (State::InProgress, "in_progress"),
             (State::Done, "done"),
         ] {
@@ -135,9 +135,9 @@ mod tests {
     }
 
     #[test]
-    fn ready_parses_as_queued() {
-        let parsed: State = "ready".parse().unwrap();
-        assert_eq!(parsed, State::Queued);
+    fn queued_parses_as_ready() {
+        let parsed: State = "queued".parse().unwrap();
+        assert_eq!(parsed, State::Ready);
     }
 
     #[test]

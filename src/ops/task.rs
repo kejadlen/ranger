@@ -597,7 +597,7 @@ mod tests {
             CreateTask {
                 title: "Queued task",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -621,7 +621,7 @@ mod tests {
             &mut conn,
             bl.id,
             &ListFilter {
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 ..Default::default()
             },
         )
@@ -676,14 +676,14 @@ mod tests {
             task.id,
             Some("Updated"),
             Some("A description"),
-            Some(State::Queued),
+            Some(State::Ready),
         )
         .await
         .unwrap();
 
         assert_eq!(updated.title, "Updated");
         assert_eq!(updated.description.as_deref(), Some("A description"));
-        assert_eq!(updated.state, State::Queued);
+        assert_eq!(updated.state, State::Ready);
     }
 
     #[tokio::test]
@@ -1027,7 +1027,7 @@ mod tests {
             CreateTask {
                 title: "Q",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1048,7 +1048,7 @@ mod tests {
         let err = move_task(&mut conn, &queued, Placement::Before(&done))
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("queued"));
+        assert!(err.to_string().contains("ready"));
         assert!(err.to_string().contains("done"));
     }
 
@@ -1086,7 +1086,7 @@ mod tests {
             CreateTask {
                 title: "Queued 1",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1130,7 +1130,7 @@ mod tests {
             CreateTask {
                 title: "Queued 1",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1141,7 +1141,7 @@ mod tests {
             CreateTask {
                 title: "Queued 2",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1160,16 +1160,16 @@ mod tests {
         .unwrap();
 
         // Move in_progress task to queued — should land before Queued 1
-        let updated = edit(&mut conn, ip.id, None, None, Some(State::Queued))
+        let updated = edit(&mut conn, ip.id, None, None, Some(State::Ready))
             .await
             .unwrap();
-        assert_eq!(updated.state, State::Queued);
+        assert_eq!(updated.state, State::Ready);
 
         let queued = list(
             &mut conn,
             bl.id,
             &ListFilter {
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 ..Default::default()
             },
         )
@@ -1195,7 +1195,7 @@ mod tests {
             CreateTask {
                 title: "First",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1206,7 +1206,7 @@ mod tests {
             CreateTask {
                 title: "Second",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1216,7 +1216,7 @@ mod tests {
         let original_pos = t1.position.clone();
 
         // Edit to same state — position should not change
-        let updated = edit(&mut conn, t1.id, None, None, Some(State::Queued))
+        let updated = edit(&mut conn, t1.id, None, None, Some(State::Ready))
             .await
             .unwrap();
         assert_eq!(updated.position, original_pos);
@@ -1225,7 +1225,7 @@ mod tests {
             &mut conn,
             bl.id,
             &ListFilter {
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 ..Default::default()
             },
         )
@@ -1246,7 +1246,7 @@ mod tests {
             CreateTask {
                 title: "Queued task",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1484,7 +1484,7 @@ mod tests {
             CreateTask {
                 title: "Tagged queued",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1495,7 +1495,7 @@ mod tests {
             CreateTask {
                 title: "Untagged queued",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1508,7 +1508,7 @@ mod tests {
             &mut conn,
             bl.id,
             &ListFilter {
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 tag: Some("bug".to_string()),
                 ..Default::default()
             },
@@ -1553,7 +1553,7 @@ mod tests {
             CreateTask {
                 title: "Queued task",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1577,7 +1577,7 @@ mod tests {
             CreateTask {
                 title: "Task",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1613,7 +1613,7 @@ mod tests {
         .unwrap();
         assert!(task.done_at.is_some());
 
-        let updated = edit(&mut conn, task.id, None, None, Some(State::Queued))
+        let updated = edit(&mut conn, task.id, None, None, Some(State::Ready))
             .await
             .unwrap();
         assert!(
@@ -1634,7 +1634,7 @@ mod tests {
             CreateTask {
                 title: "First done",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1645,7 +1645,7 @@ mod tests {
             CreateTask {
                 title: "Second done",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )
@@ -1656,7 +1656,7 @@ mod tests {
             CreateTask {
                 title: "Third done",
                 backlog_id: bl.id,
-                state: Some(State::Queued),
+                state: Some(State::Ready),
                 description: None,
             },
         )

@@ -24,13 +24,13 @@
 
   /* ── Color tokens: state ── */
   --color-in-progress: #629a3e;
-  --color-queued:      #3d6098;
+  --color-ready:      #3d6098;
   --color-done:        #8ba83b;
   --color-icebox:      #8a8878;
 
   /* ── State row tints (12 % opacity) ── */
   --tint-in-progress:  rgba(210, 170, 30, 0.12);
-  --tint-queued:       rgba(160, 160, 160, 0.12);
+  --tint-ready:       rgba(160, 160, 160, 0.12);
   --tint-done:         rgba(98, 154, 62, 0.24);
   --tint-icebox:       rgba(61, 96, 152, 0.20);
 
@@ -237,7 +237,7 @@ header .counts {
 }
 
 .section-label-in-progress { color: var(--color-in-progress); }
-.section-label-queued      { color: var(--color-queued); }
+.section-label-ready      { color: var(--color-ready); }
 .section-label-done        { color: var(--color-done); }
 .section-label-icebox      { color: var(--color-icebox); }
 
@@ -384,7 +384,7 @@ details.task[open] > summary .expand-icon {
 
 /* === State-specific row tints === */
 .state-in-progress .task { background: #fdf6e3; }
-.state-queued .task      { background: #f5f5f3; }
+.state-ready .task      { background: #f5f5f3; }
 .state-done .task        { background: #eef5e6; }
 .state-icebox .task      { background: #e8eef6; }
 

@@ -104,13 +104,13 @@ async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Resul
     let prefixes = key::unique_prefix_lengths(&all_keys);
 
     let mut in_progress = Vec::new();
-    let mut queued = Vec::new();
+    let mut ready = Vec::new();
     let mut icebox = Vec::new();
     let mut done = Vec::new();
 
     for s in [
         ranger::models::State::InProgress,
-        ranger::models::State::Queued,
+        ranger::models::State::Ready,
         ranger::models::State::Icebox,
         ranger::models::State::Done,
     ] {
@@ -122,14 +122,14 @@ async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Resul
         let views = to_task_views(&tasks, &prefixes, &mut conn).await?;
         match s {
             ranger::models::State::InProgress => in_progress = views,
-            ranger::models::State::Queued => queued = views,
+            ranger::models::State::Ready => ready = views,
             ranger::models::State::Icebox => icebox = views,
             ranger::models::State::Done => done = views,
         }
     }
 
-    let total = in_progress.len() + queued.len() + icebox.len() + done.len();
-    let active = in_progress.len() + queued.len();
+    let total = in_progress.len() + ready.len() + icebox.len() + done.len();
+    let active = in_progress.len() + ready.len();
 
     Ok(html! {
         (DOCTYPE)
@@ -170,7 +170,7 @@ async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Resul
                     div.counts { (active) " active · " (total) " total" }
                 }
                 div.board {
-                    (render_backlog_panel(&in_progress, &queued))
+                    (render_backlog_panel(&in_progress, &ready))
                     (render_column_panel("Icebox", "state-icebox", &icebox))
                     (render_column_panel("Done", "state-done", &done))
                 }
@@ -180,15 +180,15 @@ async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Resul
     })
 }
 
-fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> Markup {
-    let count = in_progress.len() + queued.len();
+fn render_backlog_panel(in_progress: &[TaskView], ready: &[TaskView]) -> Markup {
+    let count = in_progress.len() + ready.len();
     html! {
         div.panel {
             div.panel-header {
                 h2 { "Backlog" }
                 span.count { (count) }
             }
-            @if in_progress.is_empty() && queued.is_empty() {
+            @if in_progress.is_empty() && ready.is_empty() {
                 div.empty { "No active tasks" }
             } @else {
                 @if !in_progress.is_empty() {
@@ -198,9 +198,9 @@ fn render_backlog_panel(in_progress: &[TaskView], queued: &[TaskView]) -> Markup
                         }
                     }
                 }
-                @if !queued.is_empty() {
-                    div.state-queued {
-                        @for task in queued {
+                @if !ready.is_empty() {
+                    div.state-ready {
+                        @for task in ready {
                             (render_task(task))
                         }
                     }
