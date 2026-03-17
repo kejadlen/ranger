@@ -285,6 +285,30 @@ fn full_workflow() {
         .unwrap();
     assert!(output.status.success());
 
+    // Show done task — should include done_at timestamp
+    let output = ranger(db_path)
+        .args(["task", "show", &t1_key[..4]])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("Done:"),
+        "task show should display done_at for done tasks"
+    );
+
+    // JSON detail includes done_at
+    let output = ranger(db_path)
+        .args(["task", "show", &t1_key[..4], "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        detail["task"]["done_at"].is_string(),
+        "JSON should include done_at for done tasks"
+    );
+
     // Backlog show hides done tasks by default
     let output = ranger(db_path).args(["backlog", "show"]).output().unwrap();
     assert!(output.status.success());

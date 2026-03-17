@@ -417,4 +417,7 @@ fn print_task_detail(t: &Task, prefixes: &HashMap<String, usize>) {
     }
     println!("Created: {}", t.created_at);
     println!("Updated: {}", t.updated_at);
+    if let Some(done_at) = &t.done_at {
+        println!("Done:    {}", done_at);
+    }
 }

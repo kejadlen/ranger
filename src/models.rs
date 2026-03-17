@@ -108,6 +108,7 @@ pub struct Task {
     pub archived: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    pub done_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

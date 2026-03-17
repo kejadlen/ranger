@@ -6,7 +6,7 @@ use crate::position;
 use sqlx::sqlite::SqliteConnection;
 use std::collections::HashMap;
 
-const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.backlog_id, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at";
+const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.backlog_id, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at, tasks.done_at";
 
 pub struct CreateTask<'a> {
     pub title: &'a str,
@@ -33,10 +33,17 @@ pub async fn create(
 
     let new_pos = position::between(last_pos.as_deref().unwrap_or(""), "");
 
+    let done_at = if state == State::Done {
+        Some("strftime('%Y-%m-%dT%H:%M:%SZ', 'now')")
+    } else {
+        None
+    };
+
     let query = format!(
-        "INSERT INTO tasks (key, backlog_id, title, description, state, position) \
-         VALUES (?, ?, ?, ?, ?, ?) \
-         RETURNING {TASK_COLUMNS}"
+        "INSERT INTO tasks (key, backlog_id, title, description, state, position, done_at) \
+         VALUES (?, ?, ?, ?, ?, ?, {}) \
+         RETURNING {TASK_COLUMNS}",
+        done_at.unwrap_or("NULL")
     );
 
     let task = sqlx::query_as::<_, Task>(&query)
@@ -77,9 +84,15 @@ pub async fn list(
         ""
     };
 
-    let order_clause = match ordering {
-        Ordering::Position => " ORDER BY position",
-        Ordering::Dag => " ORDER BY id",
+    let is_done_only = filter.state.as_ref() == Some(&State::Done);
+    let order_clause = if is_done_only {
+        // Done tasks order by completion time (most recent last)
+        " ORDER BY done_at"
+    } else {
+        match ordering {
+            Ordering::Position => " ORDER BY position",
+            Ordering::Dag => " ORDER BY id",
+        }
     };
 
     let mut tasks = if let Some(state) = &filter.state {
@@ -208,7 +221,16 @@ pub async fn edit(
             .fetch_one(&mut *conn)
             .await?;
 
-        sqlx::query("UPDATE tasks SET state = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?")
+        let done_at_expr = if *new_state == State::Done {
+            "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+        } else {
+            "NULL"
+        };
+        let sql = format!(
+            "UPDATE tasks SET state = ?, done_at = {done_at_expr}, \
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
+        );
+        sqlx::query(&sql)
             .bind(new_state.as_str())
             .bind(task_id)
             .execute(&mut *conn)
@@ -2444,5 +2466,205 @@ mod tests {
         assert_eq!(tasks[0].id, t1.id);
         assert_eq!(tasks[1].id, t3.id);
         assert_eq!(tasks[2].id, t2.id);
+    }
+
+    // ---- done_at tests ----
+
+    #[tokio::test]
+    async fn create_with_done_state_sets_done_at() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let task = create(
+            &mut conn,
+            CreateTask {
+                title: "Done task",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(task.done_at.is_some(), "done task should have done_at set");
+    }
+
+    #[tokio::test]
+    async fn create_with_non_done_state_has_no_done_at() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let task = create(
+            &mut conn,
+            CreateTask {
+                title: "Queued task",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            task.done_at.is_none(),
+            "non-done task should not have done_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_to_done_sets_done_at() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let task = create(
+            &mut conn,
+            CreateTask {
+                title: "Task",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(task.done_at.is_none());
+
+        let updated = edit(
+            &mut conn,
+            task.id,
+            None,
+            None,
+            Some(State::Done),
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
+        assert!(
+            updated.done_at.is_some(),
+            "should set done_at on transition to done"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_from_done_clears_done_at() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let task = create(
+            &mut conn,
+            CreateTask {
+                title: "Task",
+                backlog_id: bl.id,
+                state: Some(State::Done),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(task.done_at.is_some());
+
+        let updated = edit(
+            &mut conn,
+            task.id,
+            None,
+            None,
+            Some(State::Queued),
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
+        assert!(
+            updated.done_at.is_none(),
+            "should clear done_at on transition away from done"
+        );
+    }
+
+    #[tokio::test]
+    async fn done_tasks_ordered_by_done_at() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        // Create three queued tasks
+        let t1 = create(
+            &mut conn,
+            CreateTask {
+                title: "First done",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = create(
+            &mut conn,
+            CreateTask {
+                title: "Second done",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t3 = create(
+            &mut conn,
+            CreateTask {
+                title: "Third done",
+                backlog_id: bl.id,
+                state: Some(State::Queued),
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Mark them done in a specific order: t3, t1, t2
+        // Use direct SQL to set distinct done_at timestamps
+        sqlx::query(
+            "UPDATE tasks SET state = 'done', done_at = '2026-01-01T00:00:00Z' WHERE id = ?",
+        )
+        .bind(t3.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE tasks SET state = 'done', done_at = '2026-01-02T00:00:00Z' WHERE id = ?",
+        )
+        .bind(t1.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE tasks SET state = 'done', done_at = '2026-01-03T00:00:00Z' WHERE id = ?",
+        )
+        .bind(t2.id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let done = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Done),
+                ..Default::default()
+            },
+            Ordering::Position,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(done.len(), 3);
+        assert_eq!(done[0].id, t3.id, "earliest done_at first");
+        assert_eq!(done[1].id, t1.id);
+        assert_eq!(done[2].id, t2.id, "latest done_at last");
     }
 }
