@@ -24,7 +24,7 @@ pub async fn run(
     pool: &SqlitePool,
     port: u16,
     default_backlog: Option<String>,
-) -> color_eyre::Result<()> {
+) -> Result<(), ranger::error::RangerError> {
     let state = AppState {
         pool: pool.clone(),
         default_backlog,
@@ -92,7 +92,10 @@ struct TaskView {
     tags: Vec<String>,
 }
 
-async fn render_board(state: &AppState, backlog_name: &str) -> color_eyre::Result<Markup> {
+async fn render_board(
+    state: &AppState,
+    backlog_name: &str,
+) -> Result<Markup, ranger::error::RangerError> {
     let mut conn = state.pool.acquire().await?;
 
     // Fetch all backlogs for the selector
@@ -326,7 +329,7 @@ async fn to_task_views(
     tasks: &[Task],
     prefixes: &std::collections::HashMap<String, usize>,
     conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
-) -> color_eyre::Result<Vec<TaskView>> {
+) -> Result<Vec<TaskView>, ranger::error::RangerError> {
     let mut views = Vec::with_capacity(tasks.len());
     for task in tasks {
         let prefix_len = prefixes.get(&task.key).copied().unwrap_or(8);

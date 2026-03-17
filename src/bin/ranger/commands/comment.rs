@@ -1,7 +1,7 @@
 use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
-use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
+use ranger::error::RangerError;
 use ranger::ops;
 
 use crate::completions;
@@ -27,7 +27,11 @@ pub enum CommentCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, command: CommentCommands, json: bool) -> Result<()> {
+pub async fn run(
+    pool: &SqlitePool,
+    command: CommentCommands,
+    json: bool,
+) -> Result<(), RangerError> {
     let backlog_scope = super::task::default_backlog_id(pool).await;
     let mut conn = pool.acquire().await?;
 

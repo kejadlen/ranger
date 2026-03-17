@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use clap::{Args, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
-use color_eyre::eyre::{Result, bail};
 use ranger::db::{SqliteConnection, SqlitePool};
+use ranger::error::RangerError as Error;
 use ranger::key;
 use ranger::models::{State, Task};
 use ranger::ops;
@@ -28,7 +28,7 @@ impl PositionArgs {
         self,
         conn: &mut SqliteConnection,
         backlog_id: Option<i64>,
-    ) -> Result<Option<PositionAnchors>> {
+    ) -> Result<Option<PositionAnchors>, Error> {
         match (self.before, self.after) {
             (None, None) => Ok(None),
             (Some(b), None) => {
@@ -168,7 +168,7 @@ pub async fn default_backlog_id(pool: &SqlitePool) -> Option<i64> {
         .map(|b| b.id)
 }
 
-pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result<()> {
+pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result<(), Error> {
     let backlog_scope = default_backlog_id(pool).await;
 
     match command {
@@ -319,7 +319,9 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                         task.title
                     );
                 }
-                None => bail!("--before or --after is required"),
+                None => {
+                    return Err(Error::Usage("--before or --after is required".into()));
+                }
             }
         }
         TaskCommands::Delete { key } => {

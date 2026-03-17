@@ -4,6 +4,7 @@ mod output;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
+use miette::IntoDiagnostic;
 use std::path::PathBuf;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -71,8 +72,7 @@ fn resolve_db_path(cli_path: Option<PathBuf>) -> PathBuf {
         .expect("failed to create data directory")
 }
 
-fn main() -> color_eyre::Result<()> {
-    color_eyre::install()?;
+fn main() -> miette::Result<()> {
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(EnvFilter::from_default_env())
@@ -85,11 +85,12 @@ fn main() -> color_eyre::Result<()> {
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?
+        .build()
+        .into_diagnostic()?
         .block_on(async_main())
 }
 
-async fn async_main() -> color_eyre::Result<()> {
+async fn async_main() -> miette::Result<()> {
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db);
     let pool = ranger::db::connect(&db_path).await?;

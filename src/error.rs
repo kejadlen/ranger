@@ -1,4 +1,4 @@
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum RangerError {
     #[error("no key matching prefix '{0}'")]
     KeyNotFound(String),
@@ -11,10 +11,14 @@ pub enum RangerError {
     },
     #[error("backlog not found: '{0}'")]
     BacklogNotFound(String),
+    #[error(transparent)]
+    InvalidState(#[from] crate::models::InvalidStateError),
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("migration error: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("{0}")]
+    Usage(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

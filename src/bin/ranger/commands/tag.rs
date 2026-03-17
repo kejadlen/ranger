@@ -1,6 +1,6 @@
 use clap::Subcommand;
-use color_eyre::eyre::Result;
 use ranger::db::SqlitePool;
+use ranger::error::RangerError;
 use ranger::ops;
 
 use super::task::default_backlog_id;
@@ -28,7 +28,7 @@ pub enum TagCommands {
     List,
 }
 
-pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<()> {
+pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<(), RangerError> {
     let backlog_scope = default_backlog_id(pool).await;
     let mut conn = pool.acquire().await?;
 
