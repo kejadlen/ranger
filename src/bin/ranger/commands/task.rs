@@ -5,21 +5,12 @@ use clap_complete::engine::ArgValueCompleter;
 use color_eyre::eyre::{Result, bail};
 use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::key;
-use ranger::models::{Ordering, State, Task};
+use ranger::models::{State, Task};
 use ranger::ops;
 use ranger::ops::task::{ListFilter, Placement};
 
 use crate::completions;
 use crate::output;
-
-/// Read the ordering strategy from the `RANGER_DAG_ORDER` env var.
-/// Set `RANGER_DAG_ORDER=1` to use DAG topological ordering.
-pub fn resolve_ordering() -> Ordering {
-    match std::env::var("RANGER_DAG_ORDER").as_deref() {
-        Ok("1") | Ok("true") => Ordering::Dag,
-        _ => Ordering::Position,
-    }
-}
 
 /// Positioning flags shared by create, edit, and move.
 #[derive(Args)]
@@ -179,7 +170,6 @@ pub async fn default_backlog_id(pool: &SqlitePool) -> Option<i64> {
 
 pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result<()> {
     let backlog_scope = default_backlog_id(pool).await;
-    let ordering = resolve_ordering();
 
     match command {
         TaskCommands::Create {
@@ -207,7 +197,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             .await?;
 
             if let Some(ref anchors) = anchors {
-                ops::task::move_task(&mut tx, &task, anchors.as_placement(), ordering).await?;
+                ops::task::move_task(&mut tx, &task, anchors.as_placement()).await?;
             }
 
             tx.commit().await?;
@@ -234,7 +224,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
                 let backlog_keys = ops::task::keys_for_backlog(&mut conn, bl.id).await?;
                 let prefixes = key::unique_prefix_lengths(&backlog_keys);
-                let tasks = ops::task::list(&mut conn, bl.id, &filter, ordering).await?;
+                let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
                 output::print_list(&tasks, json, |t| print_task(t, &prefixes));
             } else {
                 // List all tasks (no backlog filter)
@@ -243,7 +233,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 let backlogs = ops::backlog::list(&mut conn).await?;
                 let mut all_tasks = Vec::new();
                 for bl in &backlogs {
-                    let tasks = ops::task::list(&mut conn, bl.id, &filter, ordering).await?;
+                    let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
                     for t in tasks {
                         if !all_tasks.iter().any(|at: &Task| at.id == t.id) {
                             all_tasks.push(t);
@@ -258,14 +248,12 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let task = ops::task::get_by_key_prefix(&mut conn, &key, backlog_scope).await?;
             let comments = ops::comment::list(&mut conn, task.id).await?;
             let tags = ops::tag::list_for_task(&mut conn, task.id).await?;
-            let edges = ops::edge::list_for_task(&mut conn, task.id).await?;
 
             if json {
                 let detail = serde_json::json!({
                     "task": task,
                     "comments": comments,
                     "tags": tags,
-                    "edges": edges,
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
@@ -276,22 +264,6 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 if !tags.is_empty() {
                     let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
                     println!("Tags:    {}", tag_names.join(", "));
-                }
-                if !edges.is_empty() {
-                    for e in &edges {
-                        let other_id = if e.from_task_id == task.id {
-                            e.to_task_id
-                        } else {
-                            e.from_task_id
-                        };
-                        let other = ops::task::get_by_id(&mut conn, other_id).await?;
-                        let other_key = output::format_key_from_map(&other.key, &prefixes);
-                        if e.from_task_id == task.id {
-                            println!("Edge:    {} → {}", e.edge_type, other_key);
-                        } else {
-                            println!("Edge:    {} ← {}", e.edge_type, other_key);
-                        }
-                    }
                 }
                 if !comments.is_empty() {
                     println!();
@@ -320,12 +292,11 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 title.as_deref(),
                 description.as_deref(),
                 state,
-                ordering,
             )
             .await?;
 
             if let Some(ref anchors) = anchors {
-                ops::task::move_task(&mut conn, &updated, anchors.as_placement(), ordering).await?;
+                ops::task::move_task(&mut conn, &updated, anchors.as_placement()).await?;
             }
 
             let all_keys = ops::task::all_keys(&mut conn).await?;
@@ -339,8 +310,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
 
             match anchors {
                 Some(anchors) => {
-                    ops::task::move_task(&mut conn, &task, anchors.as_placement(), ordering)
-                        .await?;
+                    ops::task::move_task(&mut conn, &task, anchors.as_placement()).await?;
                     let all_keys = ops::task::all_keys(&mut conn).await?;
                     let prefixes = key::unique_prefix_lengths(&all_keys);
                     println!(

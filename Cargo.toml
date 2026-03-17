@@ -19,7 +19,6 @@ serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 sqlx = { version = "*", features = ["runtime-tokio", "sqlite", "migrate"] }
 maud = { version = "*", features = ["axum"] }
-petgraph = "*"
 thiserror = "*"
 tokio = { version = "*", features = ["full"] }
 xdg = "*"

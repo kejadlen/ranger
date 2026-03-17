@@ -11,8 +11,6 @@ pub enum RangerError {
     },
     #[error("backlog not found: '{0}'")]
     BacklogNotFound(String),
-    #[error("adding this edge would create a cycle")]
-    CycleDetected,
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
     #[error("migration error: {0}")]

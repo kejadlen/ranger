@@ -3,16 +3,6 @@ use sqlx::FromRow;
 
 use crate::timestamp::Timestamp;
 
-/// Controls how tasks are ordered within a backlog/state group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Ordering {
-    /// Lexicographic position strings (legacy).
-    #[default]
-    Position,
-    /// DAG topological sort using `before` edges, with task ID as tiebreaker.
-    Dag,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
@@ -125,74 +115,6 @@ pub struct Comment {
     pub created_at: Timestamp,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeType {
-    Blocks,
-    Before,
-}
-
-impl EdgeType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            EdgeType::Blocks => "blocks",
-            EdgeType::Before => "before",
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("invalid edge type: '{0}'")]
-pub struct InvalidEdgeTypeError(String);
-
-impl std::str::FromStr for EdgeType {
-    type Err = InvalidEdgeTypeError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "blocks" => Ok(EdgeType::Blocks),
-            "before" => Ok(EdgeType::Before),
-            _ => Err(InvalidEdgeTypeError(s.to_string())),
-        }
-    }
-}
-
-impl std::fmt::Display for EdgeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl sqlx::Type<sqlx::Sqlite> for EdgeType {
-    fn type_info() -> sqlx::sqlite::SqliteTypeInfo {
-        <str as sqlx::Type<sqlx::Sqlite>>::type_info()
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Sqlite> for EdgeType {
-    fn decode(value: sqlx::sqlite::SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let s = <&str as sqlx::Decode<sqlx::Sqlite>>::decode(value)?;
-        Ok(s.parse::<EdgeType>()?)
-    }
-}
-
-impl sqlx::Encode<'_, sqlx::Sqlite> for EdgeType {
-    fn encode_by_ref(
-        &self,
-        buf: &mut <sqlx::Sqlite as sqlx::Database>::ArgumentBuffer<'_>,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <&str as sqlx::Encode<sqlx::Sqlite>>::encode_by_ref(&self.as_str(), buf)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct TaskEdge {
-    pub id: i64,
-    pub from_task_id: i64,
-    pub to_task_id: i64,
-    pub edge_type: EdgeType,
-    pub created_at: Timestamp,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,39 +132,6 @@ mod tests {
             let parsed: State = expected.parse().unwrap();
             assert_eq!(parsed.as_str(), expected);
         }
-    }
-
-    #[test]
-    fn edge_type_roundtrips_through_display_and_parse() {
-        for (edge_type, expected) in [(EdgeType::Blocks, "blocks"), (EdgeType::Before, "before")] {
-            assert_eq!(edge_type.as_str(), expected);
-            assert_eq!(edge_type.to_string(), expected);
-            let parsed: EdgeType = expected.parse().unwrap();
-            assert_eq!(parsed.as_str(), expected);
-        }
-    }
-
-    #[test]
-    fn edge_type_parse_invalid_returns_error() {
-        let err = "bogus".parse::<EdgeType>().unwrap_err();
-        assert_eq!(err.to_string(), "invalid edge type: 'bogus'");
-    }
-
-    #[tokio::test]
-    async fn edge_type_sqlx_encode_roundtrips() {
-        let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::connect(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        let mut conn = pool.acquire().await.unwrap();
-
-        let edge_type = EdgeType::Blocks;
-        let row: (String,) = sqlx::query_as("SELECT ?")
-            .bind(&edge_type)
-            .fetch_one(&mut *conn)
-            .await
-            .unwrap();
-        assert_eq!(row.0, "blocks");
     }
 
     #[test]
