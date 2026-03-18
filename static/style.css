@@ -192,6 +192,12 @@ header .counts {
   overflow-y: auto;
   background: rgba(255, 255, 255, 0.05);
   border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel > .drop-zone {
+  flex: 1;
 }
 
 .panel-header {
@@ -424,8 +430,11 @@ details.task[open] > summary .expand-icon {
 }
 
 .drop-zone {
-  min-height: 40px;
   transition: background 0.15s ease;
+}
+
+.drop-zone.drag-active {
+  min-height: 40px;
 }
 
 .drop-zone-active {

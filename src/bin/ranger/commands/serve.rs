@@ -301,8 +301,8 @@ async fn render_board(
                 }
                 div.board {
                     (render_backlog_panel(&in_progress, &ready))
-                    (render_column_panel("Icebox", "state-icebox", "icebox", &icebox))
-                    (render_column_panel("Done", "state-done", "done", &done))
+                    (render_column_panel("Icebox", "state-icebox", Some("icebox"), &icebox))
+                    (render_column_panel("Done", "state-done", None, &done))
                 }
                 (keyboard_nav_script())
             }
@@ -318,9 +318,11 @@ fn render_backlog_panel(in_progress: &[TaskView], ready: &[TaskView]) -> Markup 
                 h2 { "Backlog" }
                 span.count { (count) }
             }
-            div.state-in-progress.drop-zone data-state="in_progress" {
-                @for task in in_progress {
-                    (render_task(task))
+            @if !in_progress.is_empty() {
+                div.state-in-progress {
+                    @for task in in_progress {
+                        (render_task(task))
+                    }
                 }
             }
             div.state-ready.drop-zone data-state="ready" {
@@ -335,17 +337,21 @@ fn render_backlog_panel(in_progress: &[TaskView], ready: &[TaskView]) -> Markup 
 fn render_column_panel(
     label: &str,
     state_class: &str,
-    state_value: &str,
+    drop_state: Option<&str>,
     tasks: &[TaskView],
 ) -> Markup {
     let count = tasks.len();
+    let classes = match drop_state {
+        Some(_) => format!("{state_class} drop-zone"),
+        None => state_class.to_string(),
+    };
     html! {
         div.panel {
             div.panel-header {
                 h2 { (label) }
                 span.count { (count) }
             }
-            div class=(format!("{state_class} drop-zone")) data-state=(state_value) {
+            div class=(classes) data-state=[drop_state] {
                 @if tasks.is_empty() {
                     div.empty { "No " (label.to_lowercase()) " tasks" }
                 } @else {
@@ -385,7 +391,7 @@ fn render_task(task: &TaskView) -> Markup {
                 }
             }
         } @else {
-            div.task draggable="true" data-key=(task.key) tabindex="0" {
+            div.task data-key=(task.key) tabindex="0" {
                 div.task-header {
                     span.key {
                         span.key-prefix { (task.key_prefix) }
@@ -446,108 +452,90 @@ fn keyboard_nav_script() -> Markup {
                     }
                 });
 
-                // === Drag and drop ===
+                // === Drag and drop (ready + icebox only) ===
+                var DRAGGABLE_STATES = ['ready', 'icebox'];
+                document.querySelectorAll('.drop-zone').forEach(function(z) {
+                    if (DRAGGABLE_STATES.indexOf(z.dataset.state) !== -1) {
+                        z.querySelectorAll('[data-key]').forEach(function(t) { t.draggable = true; });
+                    }
+                });
                 var draggedKey = null;
                 var draggedEl = null;
 
-                function getTaskEl(el) {
-                    return el.closest('[data-key]');
-                }
-
-                function getDropZone(el) {
-                    return el.closest('.drop-zone');
+                function getTaskEl(el) { return el.closest('[data-key]'); }
+                function getDropZone(el) { return el.closest('.drop-zone'); }
+                function isDraggableZone(zone) {
+                    return zone && DRAGGABLE_STATES.indexOf(zone.dataset.state) !== -1;
                 }
 
                 document.addEventListener('dragstart', function(e) {
                     var task = getTaskEl(e.target);
                     if (!task) return;
+                    var zone = getDropZone(task);
+                    if (!isDraggableZone(zone)) { e.preventDefault(); return; }
                     draggedKey = task.dataset.key;
                     draggedEl = task;
                     task.classList.add('dragging');
+                    document.querySelectorAll('.drop-zone').forEach(function(z) {
+                        if (isDraggableZone(z)) z.classList.add('drag-active');
+                    });
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('text/plain', draggedKey);
                 });
 
-                document.addEventListener('dragend', function(e) {
+                document.addEventListener('dragend', function() {
                     if (draggedEl) draggedEl.classList.remove('dragging');
                     document.querySelectorAll('.drop-indicator').forEach(function(el) { el.remove(); });
                     document.querySelectorAll('.drop-zone-active').forEach(function(el) { el.classList.remove('drop-zone-active'); });
+                    document.querySelectorAll('.drag-active').forEach(function(el) { el.classList.remove('drag-active'); });
                     draggedKey = null;
                     draggedEl = null;
                 });
 
                 document.addEventListener('dragover', function(e) {
                     var zone = getDropZone(e.target);
-                    if (!zone) return;
+                    if (!isDraggableZone(zone) || !draggedKey) return;
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'move';
 
-                    // Clear previous indicators
                     document.querySelectorAll('.drop-indicator').forEach(function(el) { el.remove(); });
                     document.querySelectorAll('.drop-zone-active').forEach(function(el) { el.classList.remove('drop-zone-active'); });
 
                     var tasks = Array.from(zone.querySelectorAll('[data-key]'));
-                    if (tasks.length === 0) {
-                        zone.classList.add('drop-zone-active');
-                        return;
-                    }
+                    if (tasks.length === 0) { zone.classList.add('drop-zone-active'); return; }
 
-                    // Find insertion point
-                    var closestTask = null;
-                    var insertBefore = true;
-                    var minDist = Infinity;
+                    var closestTask = null, insertBefore = true, minDist = Infinity;
                     for (var i = 0; i < tasks.length; i++) {
                         var rect = tasks[i].getBoundingClientRect();
                         var midY = rect.top + rect.height / 2;
                         var dist = Math.abs(e.clientY - midY);
-                        if (dist < minDist) {
-                            minDist = dist;
-                            closestTask = tasks[i];
-                            insertBefore = e.clientY < midY;
-                        }
+                        if (dist < minDist) { minDist = dist; closestTask = tasks[i]; insertBefore = e.clientY < midY; }
                     }
-
                     if (closestTask) {
                         var indicator = document.createElement('div');
                         indicator.className = 'drop-indicator';
-                        if (insertBefore) {
-                            closestTask.parentNode.insertBefore(indicator, closestTask);
-                        } else {
-                            closestTask.parentNode.insertBefore(indicator, closestTask.nextSibling);
-                        }
+                        closestTask.parentNode.insertBefore(indicator, insertBefore ? closestTask : closestTask.nextSibling);
                     }
                 });
 
                 document.addEventListener('drop', function(e) {
                     e.preventDefault();
                     var zone = getDropZone(e.target);
-                    if (!zone || !draggedKey) return;
+                    if (!isDraggableZone(zone) || !draggedKey) return;
 
                     var targetState = zone.dataset.state;
                     var tasks = Array.from(zone.querySelectorAll('[data-key]'))
                         .filter(function(t) { return t.dataset.key !== draggedKey; });
 
-                    // Find drop position
-                    var beforeKey = null;
-                    var afterKey = null;
-
-                    if (tasks.length === 0) {
-                        // Empty zone — just change state
-                    } else {
-                        var closestTask = null;
-                        var insertBefore = true;
-                        var minDist = Infinity;
+                    var beforeKey = null, afterKey = null;
+                    if (tasks.length > 0) {
+                        var closestTask = null, insertBefore = true, minDist = Infinity;
                         for (var i = 0; i < tasks.length; i++) {
                             var rect = tasks[i].getBoundingClientRect();
                             var midY = rect.top + rect.height / 2;
                             var dist = Math.abs(e.clientY - midY);
-                            if (dist < minDist) {
-                                minDist = dist;
-                                closestTask = tasks[i];
-                                insertBefore = e.clientY < midY;
-                            }
+                            if (dist < minDist) { minDist = dist; closestTask = tasks[i]; insertBefore = e.clientY < midY; }
                         }
-
                         if (closestTask) {
                             var idx = tasks.indexOf(closestTask);
                             if (insertBefore) {
@@ -561,13 +549,9 @@ fn keyboard_nav_script() -> Markup {
                     }
 
                     var body = {};
-                    // Determine current state of dragged element
                     var draggedZone = draggedEl ? getDropZone(draggedEl) : null;
                     var currentState = draggedZone ? draggedZone.dataset.state : null;
-
-                    if (targetState !== currentState) {
-                        body.state = targetState;
-                    }
+                    if (targetState !== currentState) body.state = targetState;
                     if (beforeKey) body.before = beforeKey;
                     if (afterKey) body.after = afterKey;
 
@@ -576,11 +560,8 @@ fn keyboard_nav_script() -> Markup {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body)
                     }).then(function(res) {
-                        if (res.ok) {
-                            window.location.reload();
-                        } else {
-                            res.text().then(function(t) { console.error('Move failed:', t); });
-                        }
+                        if (res.ok) window.location.reload();
+                        else res.text().then(function(t) { console.error('Move failed:', t); });
                     });
                 });
             })();
