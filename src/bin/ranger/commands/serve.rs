@@ -379,7 +379,7 @@ fn render_task(task: &TaskView) -> Markup {
     let has_details = task.description.is_some();
     html! {
         @if has_details {
-            details.task draggable="true" data-key=(task.key) {
+            details.task data-key=(task.key) {
                 summary tabindex="0" {
                     div.task-row {
                         span.key {
