@@ -59,6 +59,10 @@ Tests use `tempfile` for isolated SQLite databases. Each test creates its own DB
 
 The integration test (`tests/cli.rs`) exercises the full workflow via the compiled binary using `assert_cmd`.
 
+## Environment
+
+When installing system packages (`apt-get`), adding Rust components (`rustup component add`), or making any other system-level change, ask whether `.ramekin/Dockerfile` should be updated so the change persists across sessions.
+
 ## Gotchas
 
 - `sqlx::raw_sql` is used for migrations (multiple statements in one file). `sqlx::query` only runs one statement.

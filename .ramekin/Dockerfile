@@ -2,6 +2,7 @@ FROM ramekin-agent
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bc \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Rust nightly (edition 2024)
