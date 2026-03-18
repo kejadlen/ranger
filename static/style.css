@@ -290,11 +290,28 @@ details.task > summary::marker {
   content: "";
 }
 
-.task .task-header,
-.task > summary.task-header {
+.task-row {
   display: flex;
   align-items: baseline;
   gap: 8px;
+}
+
+.task-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.key-spacer {
+  width: 8ch;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step-mono);
 }
 
 .task .key {
@@ -321,25 +338,26 @@ details.task > summary::marker {
   min-width: 0;
 }
 
-/* === Expand icon === */
-.task .expand-icon {
+
+
+/* === Description subtitle === */
+.task .subtitle {
   font-size: var(--step-mono);
-  color: #7a7868;
-  margin-left: auto;
-  flex-shrink: 0;
-  transition: transform 0.15s ease;
-  display: inline-block;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+  padding-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-details.task[open] > summary .expand-icon {
-  transform: rotate(90deg);
+details.task[open] > summary .subtitle {
+  display: none;
 }
 
 /* === Task body (expanded) === */
-.task-body {
-  padding: 6px 0 2px 0;
-  margin-top: 4px;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
+details.task > .task-row {
+  padding-top: 4px;
 }
 
 .task .desc {

@@ -364,44 +364,68 @@ fn render_column_panel(
     }
 }
 
+fn truncate_desc(s: &str, max: usize) -> String {
+    let first_line = s.lines().next().unwrap_or(s);
+    if first_line.len() <= max {
+        first_line.to_string()
+    } else {
+        format!("{}…", &first_line[..max])
+    }
+}
+
 fn render_task(task: &TaskView) -> Markup {
     let has_details = task.description.is_some();
     html! {
         @if has_details {
             details.task draggable="true" data-key=(task.key) {
-                summary.task-header tabindex="0" {
-                    span.key {
-                        span.key-prefix { (task.key_prefix) }
-                        span.key-rest { (task.key_rest) }
-                    }
-                    span.title { (task.title) }
-                    @if !task.tags.is_empty() {
-                        span.tags {
-                            @for tag in &task.tags {
-                                span.tag { (tag) }
+                summary tabindex="0" {
+                    div.task-row {
+                        span.key {
+                            span.key-prefix { (task.key_prefix) }
+                            span.key-rest { (task.key_rest) }
+                        }
+                        div.task-content {
+                            div.task-title-row {
+                                span.title { (task.title) }
+                                @if !task.tags.is_empty() {
+                                    span.tags {
+                                        @for tag in &task.tags {
+                                            span.tag { (tag) }
+                                        }
+                                    }
+                                }
+                            }
+                            @if let Some(desc) = &task.description {
+                                div.subtitle { (truncate_desc(desc, 80)) }
                             }
                         }
                     }
-                    span.expand-icon { "›" }
                 }
-                div.task-body {
-                    @if let Some(desc) = &task.description {
-                        div.desc { (desc) }
+                @if let Some(desc) = &task.description {
+                    div.task-row {
+                        span.key-spacer {}
+                        div.task-content {
+                            div.desc { (desc) }
+                        }
                     }
                 }
             }
         } @else {
             div.task data-key=(task.key) tabindex="0" {
-                div.task-header {
+                div.task-row {
                     span.key {
                         span.key-prefix { (task.key_prefix) }
                         span.key-rest { (task.key_rest) }
                     }
-                    span.title { (task.title) }
-                    @if !task.tags.is_empty() {
-                        span.tags {
-                            @for tag in &task.tags {
-                                span.tag { (tag) }
+                    div.task-content {
+                        div.task-title-row {
+                            span.title { (task.title) }
+                            @if !task.tags.is_empty() {
+                                span.tags {
+                                    @for tag in &task.tags {
+                                        span.tag { (tag) }
+                                    }
+                                }
                             }
                         }
                     }
