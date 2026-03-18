@@ -52,6 +52,7 @@ tests/
 - **Subtasks are tasks**: `parent_id` on tasks — subtasks get full task capabilities.
 - **Tags**: Free-form labels on tasks via a many-to-many join table (`task_tags`). Used for cross-cutting concerns like `web`, `cli`, `infra`. Filter tasks by tag with `--tag`.
 - **No compile-time checked queries**: Using `sqlx::query_as` with runtime binding, not `query_as!` macros. No need for `DATABASE_URL` at build time.
+- **Web UI browser targets**: Latest Firefox and Safari. Modern APIs (Popover, CSS anchor positioning) are fair game.
 
 ## Testing
 

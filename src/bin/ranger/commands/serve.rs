@@ -284,11 +284,11 @@ async fn render_board(
                         "ranger" span.sep { "›" }
                         @if backlog_names.len() > 1 {
                             span.backlog-picker {
-                                button.backlog-trigger onclick="document.getElementById('backlog-dialog').show()" {
+                                button.backlog-trigger popovertarget="backlog-menu" {
                                     (backlog_name)
                                     span.backlog-caret { "▾" }
                                 }
-                                dialog #backlog-dialog {
+                                div #backlog-menu.backlog-popover popover="" {
                                     ul.backlog-list {
                                         @for name in &backlog_names {
                                             li {

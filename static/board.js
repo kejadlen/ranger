@@ -1,12 +1,4 @@
 (function() {
-    // === Backlog popover ===
-    document.addEventListener('click', function(e) {
-        var dialog = document.getElementById('backlog-dialog');
-        if (dialog && dialog.open && !dialog.contains(e.target) && !e.target.closest('.backlog-trigger')) {
-            dialog.close();
-        }
-    });
-
     // === Keyboard navigation ===
     function getFocusables() {
         return Array.from(document.querySelectorAll(

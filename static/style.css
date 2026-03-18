@@ -130,7 +130,11 @@ header h1 .sep {
 }
 
 /* === Backlog popover === */
-dialog {
+.backlog-trigger {
+  anchor-name: --backlog-trigger;
+}
+
+.backlog-popover {
   border: none;
   border-radius: 6px;
   padding: 0;
@@ -138,23 +142,12 @@ dialog {
   color: var(--color-text);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
   min-width: 180px;
+  inset: unset;
   margin: 0;
-  position: absolute;
-  top: 100%;
-  left: 0;
+  position-anchor: --backlog-trigger;
+  top: anchor(bottom);
+  left: anchor(left);
   margin-top: 6px;
-}
-
-dialog::backdrop {
-  background: transparent;
-}
-
-dialog[open] {
-  display: block;
-}
-
-.dialog-header {
-  display: none;
 }
 
 .backlog-list {
