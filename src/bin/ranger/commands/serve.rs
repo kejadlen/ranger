@@ -1,12 +1,14 @@
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{IntoResponse, Redirect};
-use axum::{Router, routing::get};
+use axum::{Json, Router, routing::get, routing::post};
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 use ranger::key;
 use ranger::models::Task;
 use ranger::ops;
 use ranger::ops::task::ListFilter;
+use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
@@ -34,6 +36,7 @@ pub async fn run(
         .route("/", get(index))
         .route("/b/{name}", get(board))
         .route("/static/style.css", get(serve_css))
+        .route("/api/tasks/{key}/move", post(api_move_task))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -72,6 +75,129 @@ async fn board(State(state): State<AppState>, Path(name): Path<String>) -> Marku
     }
 }
 
+#[derive(Deserialize)]
+struct MoveRequest {
+    state: Option<String>,
+    before: Option<String>,
+    after: Option<String>,
+}
+
+async fn api_move_task(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(body): Json<MoveRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let task = ops::task::get_by_key_prefix(&mut conn, &key, None)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+
+    // Apply state change if requested
+    if let Some(ref state_str) = body.state {
+        let new_state: ranger::models::State =
+            state_str
+                .parse()
+                .map_err(|e: ranger::models::InvalidStateError| {
+                    (StatusCode::BAD_REQUEST, e.to_string())
+                })?;
+        let updated = ops::task::edit(&mut conn, task.id, None, None, Some(new_state))
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        // Position within the new state group
+        match (&body.before, &body.after) {
+            (Some(b), Some(a)) => {
+                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                ops::task::move_task(
+                    &mut conn,
+                    &updated,
+                    ops::task::Placement::Between {
+                        after: &after,
+                        before: &before,
+                    },
+                )
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
+            (Some(b), None) => {
+                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                ops::task::move_task(&mut conn, &updated, ops::task::Placement::Before(&before))
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
+            (None, Some(a)) => {
+                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                ops::task::move_task(&mut conn, &updated, ops::task::Placement::After(&after))
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
+            (None, None) => {
+                // No position specified — state change auto-positions
+            }
+        }
+    } else {
+        // No state change — just reorder within same state
+        match (&body.before, &body.after) {
+            (Some(b), Some(a)) => {
+                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                ops::task::move_task(
+                    &mut conn,
+                    &task,
+                    ops::task::Placement::Between {
+                        after: &after,
+                        before: &before,
+                    },
+                )
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
+            (Some(b), None) => {
+                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                ops::task::move_task(&mut conn, &task, ops::task::Placement::Before(&before))
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
+            (None, Some(a)) => {
+                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                    .await
+                    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+                ops::task::move_task(&mut conn, &task, ops::task::Placement::After(&after))
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
+            (None, None) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "before or after is required when not changing state".into(),
+                ));
+            }
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn error_page(e: impl std::fmt::Display) -> Markup {
     html! {
         (DOCTYPE)
@@ -85,6 +211,7 @@ fn error_page(e: impl std::fmt::Display) -> Markup {
 }
 
 struct TaskView {
+    key: String,
     key_prefix: String,
     key_rest: String,
     title: String,
@@ -174,8 +301,8 @@ async fn render_board(
                 }
                 div.board {
                     (render_backlog_panel(&in_progress, &ready))
-                    (render_column_panel("Icebox", "state-icebox", &icebox))
-                    (render_column_panel("Done", "state-done", &done))
+                    (render_column_panel("Icebox", "state-icebox", "icebox", &icebox))
+                    (render_column_panel("Done", "state-done", "done", &done))
                 }
                 (keyboard_nav_script())
             }
@@ -191,29 +318,26 @@ fn render_backlog_panel(in_progress: &[TaskView], ready: &[TaskView]) -> Markup 
                 h2 { "Backlog" }
                 span.count { (count) }
             }
-            @if in_progress.is_empty() && ready.is_empty() {
-                div.empty { "No active tasks" }
-            } @else {
-                @if !in_progress.is_empty() {
-                    div.state-in-progress {
-                        @for task in in_progress {
-                            (render_task(task))
-                        }
-                    }
+            div.state-in-progress.drop-zone data-state="in_progress" {
+                @for task in in_progress {
+                    (render_task(task))
                 }
-                @if !ready.is_empty() {
-                    div.state-ready {
-                        @for task in ready {
-                            (render_task(task))
-                        }
-                    }
+            }
+            div.state-ready.drop-zone data-state="ready" {
+                @for task in ready {
+                    (render_task(task))
                 }
             }
         }
     }
 }
 
-fn render_column_panel(label: &str, state_class: &str, tasks: &[TaskView]) -> Markup {
+fn render_column_panel(
+    label: &str,
+    state_class: &str,
+    state_value: &str,
+    tasks: &[TaskView],
+) -> Markup {
     let count = tasks.len();
     html! {
         div.panel {
@@ -221,10 +345,10 @@ fn render_column_panel(label: &str, state_class: &str, tasks: &[TaskView]) -> Ma
                 h2 { (label) }
                 span.count { (count) }
             }
-            @if tasks.is_empty() {
-                div.empty { "No " (label.to_lowercase()) " tasks" }
-            } @else {
-                div class=(state_class) {
+            div class=(format!("{state_class} drop-zone")) data-state=(state_value) {
+                @if tasks.is_empty() {
+                    div.empty { "No " (label.to_lowercase()) " tasks" }
+                } @else {
                     @for task in tasks {
                         (render_task(task))
                     }
@@ -238,7 +362,7 @@ fn render_task(task: &TaskView) -> Markup {
     let has_details = task.description.is_some();
     html! {
         @if has_details {
-            details.task {
+            details.task draggable="true" data-key=(task.key) {
                 summary.task-header tabindex="0" {
                     span.key {
                         span.key-prefix { (task.key_prefix) }
@@ -261,7 +385,7 @@ fn render_task(task: &TaskView) -> Markup {
                 }
             }
         } @else {
-            div.task tabindex="0" {
+            div.task draggable="true" data-key=(task.key) tabindex="0" {
                 div.task-header {
                     span.key {
                         span.key-prefix { (task.key_prefix) }
@@ -286,16 +410,18 @@ fn keyboard_nav_script() -> Markup {
         script {
             (PreEscaped(r#"
             (function() {
-                // Close backlog popover on outside click
+                // === Backlog popover ===
                 document.addEventListener('click', function(e) {
                     var dialog = document.getElementById('backlog-dialog');
                     if (dialog && dialog.open && !dialog.contains(e.target) && !e.target.closest('.backlog-trigger')) {
                         dialog.close();
                     }
                 });
+
+                // === Keyboard navigation ===
                 function getFocusables() {
                     return Array.from(document.querySelectorAll(
-                        'details.task > summary, div.task'
+                        'details.task > summary, div.task[data-key]'
                     ));
                 }
                 function focusEl(els, idx) {
@@ -318,6 +444,144 @@ fn keyboard_nav_script() -> Markup {
                         e.preventDefault();
                         document.activeElement.click();
                     }
+                });
+
+                // === Drag and drop ===
+                var draggedKey = null;
+                var draggedEl = null;
+
+                function getTaskEl(el) {
+                    return el.closest('[data-key]');
+                }
+
+                function getDropZone(el) {
+                    return el.closest('.drop-zone');
+                }
+
+                document.addEventListener('dragstart', function(e) {
+                    var task = getTaskEl(e.target);
+                    if (!task) return;
+                    draggedKey = task.dataset.key;
+                    draggedEl = task;
+                    task.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', draggedKey);
+                });
+
+                document.addEventListener('dragend', function(e) {
+                    if (draggedEl) draggedEl.classList.remove('dragging');
+                    document.querySelectorAll('.drop-indicator').forEach(function(el) { el.remove(); });
+                    document.querySelectorAll('.drop-zone-active').forEach(function(el) { el.classList.remove('drop-zone-active'); });
+                    draggedKey = null;
+                    draggedEl = null;
+                });
+
+                document.addEventListener('dragover', function(e) {
+                    var zone = getDropZone(e.target);
+                    if (!zone) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+
+                    // Clear previous indicators
+                    document.querySelectorAll('.drop-indicator').forEach(function(el) { el.remove(); });
+                    document.querySelectorAll('.drop-zone-active').forEach(function(el) { el.classList.remove('drop-zone-active'); });
+
+                    var tasks = Array.from(zone.querySelectorAll('[data-key]'));
+                    if (tasks.length === 0) {
+                        zone.classList.add('drop-zone-active');
+                        return;
+                    }
+
+                    // Find insertion point
+                    var closestTask = null;
+                    var insertBefore = true;
+                    var minDist = Infinity;
+                    for (var i = 0; i < tasks.length; i++) {
+                        var rect = tasks[i].getBoundingClientRect();
+                        var midY = rect.top + rect.height / 2;
+                        var dist = Math.abs(e.clientY - midY);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            closestTask = tasks[i];
+                            insertBefore = e.clientY < midY;
+                        }
+                    }
+
+                    if (closestTask) {
+                        var indicator = document.createElement('div');
+                        indicator.className = 'drop-indicator';
+                        if (insertBefore) {
+                            closestTask.parentNode.insertBefore(indicator, closestTask);
+                        } else {
+                            closestTask.parentNode.insertBefore(indicator, closestTask.nextSibling);
+                        }
+                    }
+                });
+
+                document.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    var zone = getDropZone(e.target);
+                    if (!zone || !draggedKey) return;
+
+                    var targetState = zone.dataset.state;
+                    var tasks = Array.from(zone.querySelectorAll('[data-key]'))
+                        .filter(function(t) { return t.dataset.key !== draggedKey; });
+
+                    // Find drop position
+                    var beforeKey = null;
+                    var afterKey = null;
+
+                    if (tasks.length === 0) {
+                        // Empty zone — just change state
+                    } else {
+                        var closestTask = null;
+                        var insertBefore = true;
+                        var minDist = Infinity;
+                        for (var i = 0; i < tasks.length; i++) {
+                            var rect = tasks[i].getBoundingClientRect();
+                            var midY = rect.top + rect.height / 2;
+                            var dist = Math.abs(e.clientY - midY);
+                            if (dist < minDist) {
+                                minDist = dist;
+                                closestTask = tasks[i];
+                                insertBefore = e.clientY < midY;
+                            }
+                        }
+
+                        if (closestTask) {
+                            var idx = tasks.indexOf(closestTask);
+                            if (insertBefore) {
+                                beforeKey = closestTask.dataset.key;
+                                if (idx > 0) afterKey = tasks[idx - 1].dataset.key;
+                            } else {
+                                afterKey = closestTask.dataset.key;
+                                if (idx < tasks.length - 1) beforeKey = tasks[idx + 1].dataset.key;
+                            }
+                        }
+                    }
+
+                    var body = {};
+                    // Determine current state of dragged element
+                    var draggedZone = draggedEl ? getDropZone(draggedEl) : null;
+                    var currentState = draggedZone ? draggedZone.dataset.state : null;
+
+                    if (targetState !== currentState) {
+                        body.state = targetState;
+                    }
+                    if (beforeKey) body.before = beforeKey;
+                    if (afterKey) body.after = afterKey;
+
+                    fetch('/api/tasks/' + encodeURIComponent(draggedKey) + '/move', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    }).then(function(res) {
+                        if (res.ok) {
+                            window.location.reload();
+                        } else {
+                            res.text().then(function(t) { console.error('Move failed:', t); });
+                        }
+                    });
                 });
             })();
             "#))
@@ -345,6 +609,7 @@ async fn to_task_views(
             .collect();
 
         views.push(TaskView {
+            key: task.key.clone(),
             key_prefix,
             key_rest,
             title: task.title.clone(),

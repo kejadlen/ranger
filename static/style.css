@@ -409,6 +409,39 @@ details.task[open] > summary .expand-icon {
 }
 
 
+/* === Drag and drop === */
+.dragging {
+  opacity: 0.4;
+}
+
+.drop-indicator {
+  height: 2px;
+  background: var(--color-accent);
+  border-radius: 1px;
+  margin: -1px 0;
+  position: relative;
+  z-index: 10;
+}
+
+.drop-zone {
+  min-height: 40px;
+  transition: background 0.15s ease;
+}
+
+.drop-zone-active {
+  background: rgba(106, 159, 216, 0.1);
+  border-radius: var(--radius);
+}
+
+[draggable="true"] {
+  cursor: grab;
+}
+
+[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+
 /* === Responsive layout === */
 @media (max-width: 960px) {
   .board {
