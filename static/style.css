@@ -28,6 +28,14 @@
   --color-done:        #8ba83b;
   --color-icebox:      #8a8878;
 
+  /* ── Card text (light-background task rows) ── */
+  --color-card-title:   #333;
+  --color-card-desc:    #666;
+  --color-card-key:     #3d6098;
+  --color-card-key-dim: #7a7868;
+  --color-card-tag:     #3d6098;
+  --color-card-tag-bg:  rgba(61, 96, 152, 0.1);
+
   /* ── Card tints ── */
   --color-tint-warm:    #fdf6e3;
   --color-tint-neutral: #f5f5f3;
@@ -321,19 +329,19 @@ details.task > summary::marker {
 }
 
 .task .key-prefix {
-  color: #3d6098;
+  color: var(--color-card-key);
   font-weight: 700;
 }
 
 .task .key-rest {
-  color: #7a7868;
+  color: var(--color-card-key-dim);
   font-weight: 400;
 }
 
 .task .title {
   font-size: var(--step-0);
   font-weight: 500;
-  color: #333;
+  color: var(--color-card-title);
   flex: 1;
   min-width: 0;
 }
@@ -362,7 +370,7 @@ details.task > .task-row {
 
 .task .desc {
   font-size: var(--step-0);
-  color: #666;
+  color: var(--color-card-desc);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -379,8 +387,8 @@ details.task > .task-row {
 .task .tag {
   font-size: 0.625rem;
   font-family: var(--font-mono);
-  color: #3d6098;
-  background: rgba(61, 96, 152, 0.1);
+  color: var(--color-card-tag);
+  background: var(--color-card-tag-bg);
   padding: 0 5px;
   border-radius: 3px;
   line-height: 1.6;
