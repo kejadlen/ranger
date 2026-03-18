@@ -28,11 +28,11 @@
   --color-done:        #8ba83b;
   --color-icebox:      #8a8878;
 
-  /* ── State row tints (12 % opacity) ── */
-  --tint-in-progress:  rgba(210, 170, 30, 0.12);
-  --tint-ready:       rgba(160, 160, 160, 0.12);
-  --tint-done:         rgba(98, 154, 62, 0.24);
-  --tint-icebox:       rgba(61, 96, 152, 0.20);
+  /* ── Card tints ── */
+  --color-tint-warm:    #fdf6e3;
+  --color-tint-neutral: #f5f5f3;
+  --color-tint-green:   #e8f5de;
+  --color-tint-blue:    #e8eef6;
 
   /* ── Typography ── */
   --font-sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -407,10 +407,10 @@ details.task > .task-row {
 }
 
 /* === State-specific row tints === */
-.state-in-progress .task { background: #fdf6e3; }
-.state-ready .task      { background: #f5f5f3; }
-.state-done .task        { background: #eef5e6; }
-.state-icebox .task      { background: #e8eef6; }
+.state-in-progress .task { background: var(--color-tint-warm); }
+.state-ready .task      { background: var(--color-tint-neutral); }
+.state-done .task        { background: var(--color-tint-green); }
+.state-icebox .task      { background: var(--color-tint-blue); }
 
 /* Done tasks are slightly desaturated */
 .state-done .task {
