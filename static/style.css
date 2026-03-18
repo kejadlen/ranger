@@ -40,8 +40,8 @@
   --font-mono:  "SF Mono", "Fira Code", "Cascadia Code", Menlo, Consolas,
                 monospace;
 
-  /* Fluid type scale (utopia-style clamp, flat at this range) */
-  --step-0:    clamp(0.8125rem, 0.8125rem + 0vi, 0.8125rem);  /* 13px */
+  /* Typography scale */
+  --step-0:    0.8125rem;                                       /* 13px */
   --step-mono: 0.6875rem;                                       /* 11px */
 
   /* ── Spacing ── */
