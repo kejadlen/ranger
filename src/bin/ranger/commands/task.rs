@@ -77,9 +77,9 @@ pub enum TaskCommands {
         /// Task description
         #[arg(long)]
         description: Option<String>,
-        /// Initial state (icebox, ready, in_progress, done)
+        /// Initial state
         #[arg(long)]
-        state: Option<String>,
+        state: Option<State>,
         #[command(flatten)]
         position: PositionArgs,
     },
@@ -91,7 +91,7 @@ pub enum TaskCommands {
         backlog: Option<String>,
         /// Filter by state
         #[arg(long)]
-        state: Option<String>,
+        state: Option<State>,
         /// Filter by tag
         #[arg(long)]
         tag: Option<String>,
@@ -120,7 +120,7 @@ pub enum TaskCommands {
         description: Option<String>,
         /// New state
         #[arg(long)]
-        state: Option<String>,
+        state: Option<State>,
         #[command(flatten)]
         position: PositionArgs,
     },
@@ -183,7 +183,6 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
 
             let bl = ops::backlog::get_by_name(&mut tx, &backlog).await?;
             let anchors = position.resolve(&mut tx, Some(bl.id)).await?;
-            let state = state.map(|s| s.parse::<State>()).transpose()?;
 
             let task = ops::task::create(
                 &mut tx,
@@ -215,7 +214,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         } => {
             let mut conn = pool.acquire().await?;
             let filter = ListFilter {
-                state: state.map(|s| s.parse::<State>()).transpose()?,
+                state,
                 include_archived: archived,
                 tag,
             };
@@ -282,7 +281,6 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             position,
         } => {
             let mut conn = pool.acquire().await?;
-            let state = state.map(|s| s.parse::<State>()).transpose()?;
             let anchors = position.resolve(&mut conn, backlog_scope).await?;
 
             let task = ops::task::get_by_key_prefix(&mut conn, &key, backlog_scope).await?;

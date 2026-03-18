@@ -3,8 +3,9 @@ use sqlx::FromRow;
 
 use crate::timestamp::Timestamp;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
+#[clap(rename_all = "snake_case")]
 pub enum State {
     Icebox,
     Ready,
