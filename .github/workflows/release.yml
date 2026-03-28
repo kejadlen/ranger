@@ -29,20 +29,14 @@ jobs:
           echo "version=${CALVER}+${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build macOS
-        env:
-          RANGER_VERSION: ${{ steps.version.outputs.version }}
         run: |
           cargo build --release
           tar -czf ranger-aarch64-apple-darwin.tar.gz -C target/release ranger
 
-      - name: Build Linux (for Docker/OrbStack)
-        env:
-          RANGER_VERSION: ${{ steps.version.outputs.version }}
+      - name: Build Linux
         run: |
-          rustup target add aarch64-unknown-linux-gnu
-          brew install messense/macos-cross-toolchains/aarch64-unknown-linux-gnu
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-unknown-linux-gnu-gcc
-          cargo build --release --target aarch64-unknown-linux-gnu
+          cargo install cross --git https://github.com/cross-rs/cross
+          cross build --release --target aarch64-unknown-linux-gnu
           tar -czf ranger-aarch64-unknown-linux-gnu.tar.gz -C target/aarch64-unknown-linux-gnu/release ranger
 
       - name: Publish
@@ -58,3 +52,15 @@ jobs:
             ranger-aarch64-unknown-linux-gnu.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
+
+  dotslash:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: facebook/dotslash-publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config: .github/workflows/dotslash-config.json
+          tag: v${{ needs.build.outputs.version }}
