@@ -28,12 +28,22 @@ jobs:
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "version=${CALVER}+${SHORT_SHA}" >> $GITHUB_OUTPUT
 
-      - name: Build
+      - name: Build macOS
         env:
           RANGER_VERSION: ${{ steps.version.outputs.version }}
         run: |
           cargo build --release
           tar -czf ranger-aarch64-apple-darwin.tar.gz -C target/release ranger
+
+      - name: Build Linux (for Docker/OrbStack)
+        env:
+          RANGER_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          brew install messense/macos-cross-toolchains/aarch64-unknown-linux-gnu
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-unknown-linux-gnu-gcc
+          cargo build --release --target aarch64-unknown-linux-gnu
+          tar -czf ranger-aarch64-unknown-linux-gnu.tar.gz -C target/aarch64-unknown-linux-gnu/release ranger
 
       - name: Publish
         run: |
@@ -44,6 +54,7 @@ jobs:
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --generate-notes \
-            ranger-aarch64-apple-darwin.tar.gz
+            ranger-aarch64-apple-darwin.tar.gz \
+            ranger-aarch64-unknown-linux-gnu.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
