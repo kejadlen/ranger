@@ -11,9 +11,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  version:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -28,10 +28,27 @@ jobs:
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "version=${CALVER}+${SHORT_SHA}" >> $GITHUB_OUTPUT
 
+  build-macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Build macOS
         run: |
           cargo build --release
           tar -czf ranger-aarch64-apple-darwin.tar.gz -C target/release ranger
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ranger-aarch64-apple-darwin
+          path: ranger-aarch64-apple-darwin.tar.gz
+
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Build Linux
         run: |
@@ -39,9 +56,24 @@ jobs:
           cross build --release --target aarch64-unknown-linux-gnu
           tar -czf ranger-aarch64-unknown-linux-gnu.tar.gz -C target/aarch64-unknown-linux-gnu/release ranger
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ranger-aarch64-unknown-linux-gnu
+          path: ranger-aarch64-unknown-linux-gnu.tar.gz
+
+  publish:
+    needs: [version, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
       - name: Publish
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.version.outputs.version }}"
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
 
@@ -54,7 +86,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   dotslash:
-    needs: build
+    needs: [version, publish]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,4 +95,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           config: .github/workflows/dotslash-config.json
-          tag: v${{ needs.build.outputs.version }}
+          tag: v${{ needs.version.outputs.version }}
