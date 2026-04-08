@@ -1,14 +1,13 @@
 name: Release
 
-on:
+on: # zizmor: ignore[dangerous-triggers] -- workflow_run only triggers on main after CI passes; no fork PR risk.
   workflow_dispatch:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   version:
@@ -17,9 +16,10 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Calculate version
         id: version
@@ -32,14 +32,16 @@ jobs:
     needs: version
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Build macOS
         run: |
           cargo build --release
           tar -czf ranger-aarch64-apple-darwin.tar.gz -C target/release ranger
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ranger-aarch64-apple-darwin
           path: ranger-aarch64-apple-darwin.tar.gz
@@ -48,7 +50,9 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Build Linux
         run: |
@@ -56,7 +60,7 @@ jobs:
           cross build --release --target aarch64-unknown-linux-gnu
           tar -czf ranger-aarch64-unknown-linux-gnu.tar.gz -C target/aarch64-unknown-linux-gnu/release ranger
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ranger-aarch64-unknown-linux-gnu
           path: ranger-aarch64-unknown-linux-gnu.tar.gz
@@ -64,16 +68,18 @@ jobs:
   publish:
     needs: [version, build-macos, build-linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # zizmor: ignore[artipacked] -- git push needs persisted credentials to push the tag.
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           merge-multiple: true
 
       - name: Publish
         run: |
-          VERSION="${{ needs.version.outputs.version }}"
+          VERSION="${RELEASE_VERSION}"
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
 
@@ -84,13 +90,16 @@ jobs:
             ranger-aarch64-unknown-linux-gnu.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
 
   dotslash:
     needs: [version, publish]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: facebook/dotslash-publish-release@v1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # zizmor: ignore[artipacked] -- dotslash-publish-release needs credentials to push a commit.
+      - uses: facebook/dotslash-publish-release@2539c4d8ae00a42773306c8731d2dd3724d979d2 # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
