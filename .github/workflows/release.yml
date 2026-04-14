@@ -88,6 +88,9 @@ jobs:
             --generate-notes \
             ranger-aarch64-apple-darwin.tar.gz \
             ranger-aarch64-unknown-linux-gnu.tar.gz
+
+          # gh release create with assets was leaving releases as drafts.
+          gh release edit "v${VERSION}" --draft=false
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
