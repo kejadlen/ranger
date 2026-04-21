@@ -1,6 +1,6 @@
 name: Tag release
 
-on:
+on: # zizmor: ignore[dangerous-triggers] -- scoped to main branch only, checks CI conclusion
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -15,9 +15,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Calculate version
         id: version
@@ -28,8 +29,9 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Push tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           TAG="v${VERSION}"
 
           # Skip if this tag already exists
