@@ -15,3 +15,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: zizmorcore/zizmor-action@v0
+        with:
+          inputs: .gitea/workflows/* .github
+          advanced-security: false
+          annotations: true
