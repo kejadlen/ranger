@@ -1,0 +1,43 @@
+#!/usr/bin/env dotslash
+
+{
+  "name": "grcov",
+  "platforms": {
+    "macos-aarch64": {
+      "size": 2643857,
+      "hash": "blake3",
+      "digest": "91e6ab40733b7ae756e56ec973f7d61f77aac9a47dc00f5d5f8b8106694f6646",
+      "format": "tar.bz2",
+      "path": "grcov",
+      "providers": [
+        {
+          "url": "https://github.com/marco-c/grcov/releases/download/v0.10.7/grcov-aarch64-apple-darwin.tar.bz2"
+        },
+        {
+          "type": "github-release",
+          "repo": "https://github.com/marco-c/grcov",
+          "tag": "v0.10.7",
+          "name": "grcov-aarch64-apple-darwin.tar.bz2"
+        }
+      ]
+    },
+    "linux-x86_64": {
+      "size": 2966094,
+      "hash": "blake3",
+      "digest": "7bc1ce3a29b790eefd3a5e7fa27122d72aea3eb7acccfd6eabcb522a3ae55466",
+      "format": "tar.bz2",
+      "path": "grcov",
+      "providers": [
+        {
+          "url": "https://github.com/marco-c/grcov/releases/download/v0.10.7/grcov-x86_64-unknown-linux-gnu.tar.bz2"
+        },
+        {
+          "type": "github-release",
+          "repo": "https://github.com/marco-c/grcov",
+          "tag": "v0.10.7",
+          "name": "grcov-x86_64-unknown-linux-gnu.tar.bz2"
+        }
+      ]
+    }
+  }
+}

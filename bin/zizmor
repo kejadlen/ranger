@@ -1,0 +1,43 @@
+#!/usr/bin/env dotslash
+
+{
+  "name": "zizmor",
+  "platforms": {
+    "macos-aarch64": {
+      "size": 8313919,
+      "hash": "blake3",
+      "digest": "8dad38093c33652911433d9b3b6c01455bd785257ea38754da129497a4161bf4",
+      "format": "tar.gz",
+      "path": "zizmor",
+      "providers": [
+        {
+          "url": "https://github.com/zizmorcore/zizmor/releases/download/v1.24.1/zizmor-aarch64-apple-darwin.tar.gz"
+        },
+        {
+          "type": "github-release",
+          "repo": "https://github.com/zizmorcore/zizmor",
+          "tag": "v1.24.1",
+          "name": "zizmor-aarch64-apple-darwin.tar.gz"
+        }
+      ]
+    },
+    "linux-x86_64": {
+      "size": 8986317,
+      "hash": "blake3",
+      "digest": "c53be717c392bc73f241441004897f697a895ddfd20595d27df7cf3c15ea6b5c",
+      "format": "tar.gz",
+      "path": "zizmor",
+      "providers": [
+        {
+          "url": "https://github.com/zizmorcore/zizmor/releases/download/v1.24.1/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+        },
+        {
+          "type": "github-release",
+          "repo": "https://github.com/zizmorcore/zizmor",
+          "tag": "v1.24.1",
+          "name": "zizmor-x86_64-unknown-linux-gnu.tar.gz"
+        }
+      ]
+    }
+  }
+}

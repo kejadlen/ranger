@@ -1,0 +1,43 @@
+#!/usr/bin/env dotslash
+
+{
+  "name": "just",
+  "platforms": {
+    "macos-aarch64": {
+      "size": 1893409,
+      "hash": "blake3",
+      "digest": "5a1146a3bbd83f1c1c46b3f17ddce0cc0ede2d72aded73299bcf9ded1c0bef25",
+      "format": "tar.gz",
+      "path": "just",
+      "providers": [
+        {
+          "url": "https://github.com/casey/just/releases/download/1.50.0/just-1.50.0-aarch64-apple-darwin.tar.gz"
+        },
+        {
+          "type": "github-release",
+          "repo": "https://github.com/casey/just",
+          "tag": "1.50.0",
+          "name": "just-1.50.0-aarch64-apple-darwin.tar.gz"
+        }
+      ]
+    },
+    "linux-x86_64": {
+      "size": 2247333,
+      "hash": "blake3",
+      "digest": "1f8b5a214cdc9e11f3bfad738d9f2fe9d72b3f17bf2bb35e582ea9e2cb63e174",
+      "format": "tar.gz",
+      "path": "just",
+      "providers": [
+        {
+          "url": "https://github.com/casey/just/releases/download/1.50.0/just-1.50.0-x86_64-unknown-linux-musl.tar.gz"
+        },
+        {
+          "type": "github-release",
+          "repo": "https://github.com/casey/just",
+          "tag": "1.50.0",
+          "name": "just-1.50.0-x86_64-unknown-linux-musl.tar.gz"
+        }
+      ]
+    }
+  }
+}

@@ -14,10 +14,15 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
-      - uses: ./.gitea/actions/setup-rust
+      - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: echo "$PWD/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ~/.rustup/
+          # Bump suffix to force cache bust after upgrading rustup.
+          key: rustup-${{ runner.os }}-v1
       - run: rustup component add clippy rustfmt llvm-tools
-      - run: cargo install grcov
-      - run: cargo install just
       - run: cargo fmt --check
       - run: just clippy coverage
 
@@ -27,8 +32,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
-      - uses: ./.gitea/actions/setup-rust
+      - run: echo "$PWD/bin" >> "$GITHUB_PATH"
       # Can't use zizmorcore/zizmor-action because it doesn't support
       # auditing .gitea/workflows/ — it rejects them as invalid inputs.
-      - run: cargo install --locked zizmor
       - run: zizmor .gitea/workflows/* .github
