@@ -14,6 +14,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
       - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: echo "$PWD/bin" >> "$GITHUB_PATH"
@@ -32,6 +33,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
       - run: echo "$PWD/bin" >> "$GITHUB_PATH"
       # Can't use zizmorcore/zizmor-action because it doesn't support
       # auditing .gitea/workflows/ — it rejects them as invalid inputs.
