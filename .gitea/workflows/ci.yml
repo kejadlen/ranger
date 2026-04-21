@@ -14,25 +14,21 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
-
-      - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          # Cache key is Cargo.lock, which means cargo install'ed tools (grcov, just)
-          # may be stale after a cache hit. Bump the suffix to force a cache bust.
-          key: cargo-${{ runner.os }}-v1-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
-
+      - uses: ./.gitea/actions/setup-rust
       - run: rustup component add clippy rustfmt llvm-tools
       - run: cargo install grcov
       - run: cargo install just
       - run: cargo fmt --check
       - run: just clippy coverage
+
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.gitea/actions/setup-rust
+      # Can't use zizmorcore/zizmor-action because it doesn't support
+      # auditing .gitea/workflows/ — it rejects them as invalid inputs.
+      - run: cargo install --locked zizmor
+      - run: zizmor .gitea/workflows/* .github
