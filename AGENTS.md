@@ -75,6 +75,20 @@ When installing system packages (`apt-get`), adding Rust components (`rustup com
 - **Migrations must not lose data.** When recreating a table, always `INSERT INTO ... SELECT` all rows from the original, including data in join tables (e.g. `task_tags`). Test migrations against a database with real data, not just empty schemas.
 - SQLite doesn't support `ALTER TABLE DROP COLUMN` with foreign keys cleanly. When recreating a table, wrap in `PRAGMA foreign_keys = OFF/ON` to prevent `ON DELETE CASCADE` from wiping join tables (e.g. `task_tags`).
 
+## CI and Releases
+
+Two-forge setup:
+
+- **Gitea** (`origin`) is the source of truth. CI runs on Forgejo Actions (`.gitea/workflows/`). On push to `main` and PRs.
+- **GitHub** (`github` remote) is a mirror. Receives tags from Gitea and builds release artifacts.
+
+Release flow:
+
+1. Gitea CI passes on `main`.
+2. Gitea release workflow creates a `vYYYY-MM-DD+<short-sha>` tag and pushes it.
+3. Tag mirrors to GitHub.
+4. GitHub release workflow (`.github/workflows/release.yml`) triggers on tag push, builds macOS and Linux binaries, creates a GitHub release, and publishes Dotslash configuration.
+
 ## VCS
 
 This project uses **jj** (Jujutsu), not git directly. Use `jj` commands for commits, diffs, and history.

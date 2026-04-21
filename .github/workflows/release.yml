@@ -1,35 +1,14 @@
 name: Release
 
-on: # zizmor: ignore[dangerous-triggers] -- workflow_run only triggers on main after CI passes; no fork PR risk.
-  workflow_dispatch:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+on: # zizmor: ignore[dangerous-triggers] -- only triggers on tag pushes from Gitea mirror; no fork PR risk.
+  push:
+    tags:
+      - 'v*'
 
 permissions: {}
 
 jobs:
-  version:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Calculate version
-        id: version
-        run: |
-          CALVER=$(date -u +"%Y-%m-%d")
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "version=${CALVER}+${SHORT_SHA}" >> $GITHUB_OUTPUT
-
   build-macos:
-    needs: version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -47,7 +26,6 @@ jobs:
           path: ranger-aarch64-apple-darwin.tar.gz
 
   build-linux:
-    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -66,34 +44,28 @@ jobs:
           path: ranger-aarch64-unknown-linux-gnu.tar.gz
 
   publish:
-    needs: [version, build-macos, build-linux]
+    needs: [build-macos, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # zizmor: ignore[artipacked] -- git push needs persisted credentials to push the tag.
-
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           merge-multiple: true
 
       - name: Publish
         run: |
-          VERSION="${RELEASE_VERSION}"
-          git tag "v${VERSION}"
-          git push origin "v${VERSION}"
-
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
             --generate-notes \
             ranger-aarch64-apple-darwin.tar.gz \
             ranger-aarch64-unknown-linux-gnu.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
 
   dotslash:
-    needs: [version, publish]
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -104,4 +76,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           config: .github/workflows/dotslash-config.json
-          tag: v${{ needs.version.outputs.version }}
+          tag: ${{ github.ref_name }}

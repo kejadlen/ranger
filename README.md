@@ -81,6 +81,15 @@ Ranger is a single Rust crate with a library and binary target:
 
 The CLI exists primarily so AI agents can manage tasks programmatically. The webapp exists for humans who prefer a visual interface.
 
+## Releases
+
+Ranger uses a two-forge release pipeline:
+
+1. **Gitea** (`git.kejadlen.dev`) is the source of truth. CI runs on every push to `main` (and on PRs). When CI passes, a `vYYYY-MM-DD+<short-sha>` tag is created automatically.
+2. Tags mirror to **GitHub** (`github.com/kejadlen/ranger`). A tag push triggers the release workflow, which builds macOS and Linux binaries, creates a GitHub release, and publishes Dotslash configuration.
+
+The version format is calver: the date of the commit plus its short SHA (e.g., `v2026-04-21+abc1234`).
+
 ## Roadmap
 
 **First milestone:** self-host Ranger so an AI agent can use it for task management while building Ranger itself.
