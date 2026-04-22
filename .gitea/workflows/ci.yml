@@ -50,3 +50,37 @@ jobs:
       # Can't use zizmorcore/zizmor-action because it doesn't support
       # auditing .gitea/workflows/ — it rejects them as invalid inputs.
       - run: zizmor .gitea/workflows/* .github
+
+  tag:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4 # zizmor: ignore[artipacked] -- needs credentials to push tag
+        with:
+          fetch-depth: 0
+
+      - name: Calculate version
+        id: version
+        run: |
+          CALVER=$(date -u +"%Y-%m-%d")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION="${CALVER}+${SHORT_SHA}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Push tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+
+          # Skip if this tag already exists
+          if git tag -l "$TAG" | grep -q .; then
+            echo "Tag ${TAG} already exists, skipping"
+            exit 0
+          fi
+
+          git tag "$TAG"
+          git push origin "$TAG"
