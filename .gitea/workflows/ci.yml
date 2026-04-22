@@ -14,19 +14,23 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
+
       # Can't use facebook/install-dotslash action because it queries the
       # GitHub API using $GITHUB_TOKEN, which is a Gitea token on this runner.
       - run: |
           curl -sL https://github.com/facebook/dotslash/releases/download/v0.5.9/dotslash-linux-musl.x86_64.tar.gz |
             tar xz -C /usr/local/bin
-      - run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - run: echo "$PWD/bin" >> "$GITHUB_PATH"
+      - run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+
       - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
         with:
           path: ~/.rustup/
           # Bump suffix to force cache bust after upgrading rustup.
           key: rustup-${{ runner.os }}-v1
+
       - run: rustup component add clippy rustfmt llvm-tools
       - run: cargo fmt --check
       - run: just clippy coverage
@@ -37,12 +41,12 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
-      # Can't use facebook/install-dotslash action because it queries the
-      # GitHub API using $GITHUB_TOKEN, which is a Gitea token on this runner.
+
       - run: |
           curl -sL https://github.com/facebook/dotslash/releases/download/v0.5.9/dotslash-linux-musl.x86_64.tar.gz |
             tar xz -C /usr/local/bin
       - run: echo "$PWD/bin" >> "$GITHUB_PATH"
+
       # Can't use zizmorcore/zizmor-action because it doesn't support
       # auditing .gitea/workflows/ — it rejects them as invalid inputs.
       - run: zizmor .gitea/workflows/* .github
