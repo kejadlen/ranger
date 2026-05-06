@@ -1,0 +1,11 @@
+{
+  "name": "ranger",
+  "version": "2026.05.06",
+  "description": "Skill for managing tasks with the ranger CLI — backlogs, queueing, prioritizing, and the ranger PM workflow",
+  "author": {
+    "name": "Alpha Chen"
+  },
+  "homepage": "https://github.com/kejadlen/ranger",
+  "repository": "https://github.com/kejadlen/ranger.git",
+  "license": "MIT"
+}

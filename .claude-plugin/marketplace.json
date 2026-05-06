@@ -1,0 +1,17 @@
+{
+  "name": "ranger",
+  "owner": {
+    "name": "Alpha Chen"
+  },
+  "plugins": [
+    {
+      "name": "ranger",
+      "source": "./",
+      "version": "2026.05.06",
+      "description": "Skill for managing tasks with the ranger CLI",
+      "author": {
+        "name": "Alpha Chen"
+      }
+    }
+  ]
+}
