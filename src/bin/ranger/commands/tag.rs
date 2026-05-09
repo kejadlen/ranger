@@ -25,7 +25,11 @@ pub enum TagCommands {
     },
     /// List all tags
     #[command(visible_alias = "ls")]
-    List,
+    List {
+        /// Show tags from all backlogs (default: current backlog only)
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<(), RangerError> {
@@ -47,8 +51,12 @@ pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<
                 println!("Removed tag {} from {}", tag, task);
             }
         }
-        TagCommands::List => {
-            let tags = ops::tag::list_all(&mut conn).await?;
+        TagCommands::List { all } => {
+            let tags = if all || backlog_scope.is_none() {
+                ops::tag::list_all(&mut conn).await?
+            } else {
+                ops::tag::list_for_backlog(&mut conn, backlog_scope.unwrap()).await?
+            };
             output::print_list(&tags, json, |t| println!("{}", t.name));
         }
     }

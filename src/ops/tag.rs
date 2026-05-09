@@ -83,6 +83,22 @@ pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerErr
     )
 }
 
+/// List tags used by tasks in a specific backlog.
+pub async fn list_for_backlog(
+    conn: &mut SqliteConnection,
+    backlog_id: i64,
+) -> Result<Vec<Tag>, RangerError> {
+    Ok(sqlx::query_as::<_, Tag>(
+        "SELECT DISTINCT t.id, t.name FROM tags t \
+         JOIN task_tags tt ON t.id = tt.tag_id \
+         JOIN tasks tk ON tt.task_id = tk.id \
+         WHERE tk.backlog_id = ? ORDER BY t.name",
+    )
+    .bind(backlog_id)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +124,39 @@ mod tests {
         .await
         .unwrap();
         (pool, task.id, dir)
+    }
+
+    async fn setup_two_backlogs() -> (sqlx::SqlitePool, i64, i64, i64, i64, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::connect(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let bl1 = ops::backlog::create(&mut conn, "Alpha").await.unwrap();
+        let bl2 = ops::backlog::create(&mut conn, "Beta").await.unwrap();
+        let t1 = ops::task::create(
+            &mut conn,
+            CreateTask {
+                title: "Alpha task",
+                backlog_id: bl1.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        let t2 = ops::task::create(
+            &mut conn,
+            CreateTask {
+                title: "Beta task",
+                backlog_id: bl2.id,
+                state: None,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+        (pool, bl1.id, bl2.id, t1.id, t2.id, dir)
     }
 
     #[tokio::test]
@@ -200,5 +249,40 @@ mod tests {
         assert_eq!(tags2.len(), 1);
         assert_eq!(tags1[0].name, "shared");
         assert_eq!(tags2[0].name, "shared");
+    }
+
+    #[tokio::test]
+    async fn list_for_backlog_scopes_to_backlog() {
+        let (pool, bl1_id, bl2_id, t1_id, t2_id, _dir) = setup_two_backlogs().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        add(&mut conn, t1_id, "frontend").await.unwrap();
+        add(&mut conn, t2_id, "backend").await.unwrap();
+        // Shared tag used in both backlogs
+        add(&mut conn, t1_id, "urgent").await.unwrap();
+        add(&mut conn, t2_id, "urgent").await.unwrap();
+
+        let alpha_tags = list_for_backlog(&mut conn, bl1_id).await.unwrap();
+        assert_eq!(alpha_tags.len(), 2);
+        let alpha_names: Vec<&str> = alpha_tags.iter().map(|t| t.name.as_str()).collect();
+        assert!(alpha_names.contains(&"frontend"));
+        assert!(alpha_names.contains(&"urgent"));
+        assert!(!alpha_names.contains(&"backend"));
+
+        let beta_tags = list_for_backlog(&mut conn, bl2_id).await.unwrap();
+        assert_eq!(beta_tags.len(), 2);
+        let beta_names: Vec<&str> = beta_tags.iter().map(|t| t.name.as_str()).collect();
+        assert!(beta_names.contains(&"backend"));
+        assert!(beta_names.contains(&"urgent"));
+        assert!(!beta_names.contains(&"frontend"));
+    }
+
+    #[tokio::test]
+    async fn list_for_backlog_empty_backlog() {
+        let (pool, bl1_id, _bl2_id, _t1_id, _t2_id, _dir) = setup_two_backlogs().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let tags = list_for_backlog(&mut conn, bl1_id).await.unwrap();
+        assert!(tags.is_empty());
     }
 }
