@@ -30,6 +30,12 @@ pub enum TagCommands {
         #[arg(long)]
         all: bool,
     },
+    /// Remove unused tags (no associated tasks)
+    Prune {
+        /// Actually delete the tags (default: dry run)
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<(), RangerError> {
@@ -52,12 +58,25 @@ pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<
             }
         }
         TagCommands::List { all } => {
-            let tags = if all || backlog_scope.is_none() {
+            let tags = if all {
                 ops::tag::list_all(&mut conn).await?
+            } else if let Some(bl_id) = backlog_scope {
+                ops::tag::list_for_backlog(&mut conn, bl_id).await?
             } else {
-                ops::tag::list_for_backlog(&mut conn, backlog_scope.unwrap()).await?
+                ops::tag::list_all(&mut conn).await?
             };
             output::print_list(&tags, json, |t| println!("{}", t.name));
+        }
+        TagCommands::Prune { apply } => {
+            let pruned = ops::tag::prune(&mut conn, !apply).await?;
+            if pruned.is_empty() {
+                if !json {
+                    println!("No unused tags to remove.");
+                }
+            } else {
+                let label = if apply { "Removed" } else { "Would remove" };
+                output::print_list(&pruned, json, |t| println!("{}: {}", label, t.name));
+            }
         }
     }
     Ok(())

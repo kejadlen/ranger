@@ -83,6 +83,24 @@ pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerErr
     )
 }
 
+/// Delete tags with no associated tasks. Returns the removed tags.
+/// If dry_run is true, returns what would be removed without deleting.
+pub async fn prune(conn: &mut SqliteConnection, dry_run: bool) -> Result<Vec<Tag>, RangerError> {
+    let orphaned = sqlx::query_as::<_, Tag>(
+        "SELECT id, name FROM tags WHERE id NOT IN (SELECT tag_id FROM task_tags) ORDER BY name",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    if !dry_run {
+        sqlx::query("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM task_tags)")
+            .execute(&mut *conn)
+            .await?;
+    }
+
+    Ok(orphaned)
+}
+
 /// List tags used by tasks in a specific backlog.
 pub async fn list_for_backlog(
     conn: &mut SqliteConnection,
@@ -284,5 +302,56 @@ mod tests {
 
         let tags = list_for_backlog(&mut conn, bl1_id).await.unwrap();
         assert!(tags.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prune_removes_orphaned_tags() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        add(&mut conn, task_id, "used").await.unwrap();
+        add(&mut conn, task_id, "also-used").await.unwrap();
+        // Create an orphan by adding then removing
+        add(&mut conn, task_id, "orphan").await.unwrap();
+        remove(&mut conn, task_id, "orphan").await.unwrap();
+
+        let pruned = prune(&mut conn, false).await.unwrap();
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].name, "orphan");
+
+        let all = list_all(&mut conn).await.unwrap();
+        assert_eq!(all.len(), 2);
+        let names: Vec<&str> = all.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"used"));
+        assert!(names.contains(&"also-used"));
+    }
+
+    #[tokio::test]
+    async fn prune_dry_run_does_not_delete() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        add(&mut conn, task_id, "orphan").await.unwrap();
+        remove(&mut conn, task_id, "orphan").await.unwrap();
+
+        let pruned = prune(&mut conn, true).await.unwrap();
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].name, "orphan");
+
+        // Tag still exists after dry run
+        let all = list_all(&mut conn).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "orphan");
+    }
+
+    #[tokio::test]
+    async fn prune_no_orphans_is_empty() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        add(&mut conn, task_id, "used").await.unwrap();
+
+        let pruned = prune(&mut conn, false).await.unwrap();
+        assert!(pruned.is_empty());
     }
 }
