@@ -75,12 +75,12 @@ pub enum Confirm {
 
 /// Decide whether a destructive action may proceed.
 ///
-/// If `yes` is set, proceeds without prompting. Otherwise, prompts on stderr
-/// when stdin is a terminal; when not interactive, returns [`Confirm::NeedsFlag`]
-/// so the caller can tell the user to pass `--yes` (never blocks a script on a
-/// prompt it can't answer).
-pub fn confirm(yes: bool, prompt: &str) -> Confirm {
-    if yes {
+/// If `assume_yes` is set, proceeds without prompting. Otherwise, prompts on
+/// stderr when stdin is a terminal; when not interactive, returns
+/// [`Confirm::NeedsFlag`] so the caller can tell the user to pass `--yes`
+/// (never blocks a script on a prompt it can't answer).
+pub fn confirm(assume_yes: bool, prompt: &str) -> Confirm {
+    if assume_yes {
         return Confirm::Yes;
     }
     if !std::io::stdin().is_terminal() {
