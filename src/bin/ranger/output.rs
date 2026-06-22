@@ -63,26 +63,23 @@ pub fn print_list<T: Serialize + std::fmt::Debug>(values: &[T], json: bool, huma
     }
 }
 
-/// The outcome of a destructive-action confirmation check.
+/// The outcome of a confirmation prompt.
 pub enum Confirm {
     /// Proceed with the action.
     Yes,
     /// The user was prompted and declined.
     No,
-    /// Not pre-confirmed and not interactive — the caller should require `--yes`.
+    /// Not interactive — the caller should require `--yes`.
     NeedsFlag,
 }
 
-/// Decide whether a destructive action may proceed.
+/// Prompt on stderr to confirm a destructive action.
 ///
-/// If `assume_yes` is set, proceeds without prompting. Otherwise, prompts on
-/// stderr when stdin is a terminal; when not interactive, returns
-/// [`Confirm::NeedsFlag`] so the caller can tell the user to pass `--yes`
-/// (never blocks a script on a prompt it can't answer).
-pub fn confirm(assume_yes: bool, prompt: &str) -> Confirm {
-    if assume_yes {
-        return Confirm::Yes;
-    }
+/// Returns [`Confirm::Yes`]/[`Confirm::No`] from the user's answer when stdin is
+/// a terminal. When not interactive, returns [`Confirm::NeedsFlag`] so the caller
+/// can tell the user to pass `--yes` (never blocks a script on a prompt it can't
+/// answer). Call this only when the user has not already passed `--yes`.
+pub fn confirm(prompt: &str) -> Confirm {
     if !std::io::stdin().is_terminal() {
         return Confirm::NeedsFlag;
     }

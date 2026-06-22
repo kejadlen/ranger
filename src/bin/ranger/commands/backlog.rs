@@ -67,17 +67,19 @@ pub async fn run(
             output::print_list(&backlogs, json, print_backlog);
         }
         BacklogCommands::Delete { name, yes } => {
-            let prompt = format!("Delete backlog '{name}' and all its tasks?");
-            match output::confirm(yes, &prompt) {
-                output::Confirm::Yes => {}
-                output::Confirm::No => {
-                    println!("Aborted.");
-                    return Ok(());
-                }
-                output::Confirm::NeedsFlag => {
-                    return Err(RangerError::Usage(format!(
-                        "refusing to delete backlog '{name}' without confirmation; pass --yes to proceed"
-                    )));
+            if !yes {
+                let prompt = format!("Delete backlog '{name}' and all its tasks?");
+                match output::confirm(&prompt) {
+                    output::Confirm::Yes => {}
+                    output::Confirm::No => {
+                        println!("Aborted.");
+                        return Ok(());
+                    }
+                    output::Confirm::NeedsFlag => {
+                        return Err(RangerError::Usage(format!(
+                            "refusing to delete backlog '{name}' without confirmation; pass --yes to proceed"
+                        )));
+                    }
                 }
             }
             let backlog = ops::backlog::delete(&mut conn, &name).await?;

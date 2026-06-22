@@ -331,18 +331,20 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             let mut conn = pool.acquire().await?;
             let task = ops::task::get_by_key_prefix(&mut conn, &key, backlog_scope).await?;
 
-            let prompt = format!("Delete task '{}'?", task.title);
-            match output::confirm(yes, &prompt) {
-                output::Confirm::Yes => {}
-                output::Confirm::No => {
-                    println!("Aborted.");
-                    return Ok(());
-                }
-                output::Confirm::NeedsFlag => {
-                    return Err(Error::Usage(format!(
-                        "refusing to delete task '{}' without confirmation; pass --yes to proceed",
-                        task.title
-                    )));
+            if !yes {
+                let prompt = format!("Delete task '{}'?", task.title);
+                match output::confirm(&prompt) {
+                    output::Confirm::Yes => {}
+                    output::Confirm::No => {
+                        println!("Aborted.");
+                        return Ok(());
+                    }
+                    output::Confirm::NeedsFlag => {
+                        return Err(Error::Usage(format!(
+                            "refusing to delete task '{}' without confirmation; pass --yes to proceed",
+                            task.title
+                        )));
+                    }
                 }
             }
 
