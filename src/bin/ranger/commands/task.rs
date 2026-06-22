@@ -140,6 +140,9 @@ pub enum TaskCommands {
         /// Task key or prefix
         #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
+        /// Skip the confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Archive a task
@@ -311,28 +314,48 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                     ops::task::move_task(&mut conn, &task, anchors.as_placement()).await?;
                     let all_keys = ops::task::all_keys(&mut conn).await?;
                     let prefixes = key::unique_prefix_lengths(&all_keys);
-                    println!(
-                        "Moved {} {}",
-                        output::format_key_from_map(&task.key, &prefixes),
-                        task.title
-                    );
+                    output::print(&task, json, |t| {
+                        println!(
+                            "Moved {} {}",
+                            output::format_key_from_map(&t.key, &prefixes),
+                            t.title
+                        );
+                    });
                 }
                 None => {
                     return Err(Error::Usage("--before or --after is required".into()));
                 }
             }
         }
-        TaskCommands::Delete { key } => {
+        TaskCommands::Delete { key, yes } => {
             let mut conn = pool.acquire().await?;
             let task = ops::task::get_by_key_prefix(&mut conn, &key, backlog_scope).await?;
+
+            let prompt = format!("Delete task '{}'?", task.title);
+            match output::confirm(yes, &prompt) {
+                output::Confirm::Yes => {}
+                output::Confirm::No => {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+                output::Confirm::NeedsFlag => {
+                    return Err(Error::Usage(format!(
+                        "refusing to delete task '{}' without confirmation; pass --yes to proceed",
+                        task.title
+                    )));
+                }
+            }
+
             let all_keys = ops::task::all_keys(&mut conn).await?;
             let prefixes = key::unique_prefix_lengths(&all_keys);
             ops::task::delete(&mut conn, task.id).await?;
-            println!(
-                "Deleted {} {}",
-                output::format_key_from_map(&task.key, &prefixes),
-                task.title
-            );
+            output::print(&task, json, |t| {
+                println!(
+                    "Deleted {} {}",
+                    output::format_key_from_map(&t.key, &prefixes),
+                    t.title
+                );
+            });
         }
         TaskCommands::Archive { key } => {
             let mut conn = pool.acquire().await?;

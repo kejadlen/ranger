@@ -38,6 +38,9 @@ pub enum BacklogCommands {
         /// Backlog name
         #[arg(add = ArgValueCompleter::new(completions::complete_backlog_names))]
         name: String,
+        /// Skip the confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
     /// Rebalance task positions in a backlog
     Rebalance {
@@ -63,14 +66,32 @@ pub async fn run(
             let backlogs = ops::backlog::list(&mut conn).await?;
             output::print_list(&backlogs, json, print_backlog);
         }
-        BacklogCommands::Delete { name } => {
+        BacklogCommands::Delete { name, yes } => {
+            let prompt = format!("Delete backlog '{name}' and all its tasks?");
+            match output::confirm(yes, &prompt) {
+                output::Confirm::Yes => {}
+                output::Confirm::No => {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+                output::Confirm::NeedsFlag => {
+                    return Err(RangerError::Usage(format!(
+                        "refusing to delete backlog '{name}' without confirmation; pass --yes to proceed"
+                    )));
+                }
+            }
             let backlog = ops::backlog::delete(&mut conn, &name).await?;
             output::print(&backlog, json, |b| println!("Deleted backlog: {}", b.name));
         }
         BacklogCommands::Rebalance { name } => {
             let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;
             let count = ops::task::rebalance(&mut conn, backlog.id).await?;
-            println!("Rebalanced {count} tasks in {name}");
+            if json {
+                let value = serde_json::json!({ "backlog": name, "rebalanced": count });
+                println!("{}", serde_json::to_string_pretty(&value).unwrap());
+            } else {
+                println!("Rebalanced {count} tasks in {name}");
+            }
         }
         BacklogCommands::Show { name, done } => {
             let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;
@@ -118,10 +139,8 @@ pub async fn run(
                             let tag_str = if tags.is_empty() {
                                 String::new()
                             } else {
-                                let names: Vec<String> = tags
-                                    .iter()
-                                    .map(|tg| format!("\x1b[36m#{}\x1b[0m", tg.name))
-                                    .collect();
+                                let names: Vec<String> =
+                                    tags.iter().map(|tg| output::format_tag(&tg.name)).collect();
                                 format!(" {}", names.join(" "))
                             };
                             println!(
