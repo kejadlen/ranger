@@ -18,6 +18,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// When to colorize output
+    #[arg(long, value_enum, default_value_t, global = true)]
+    color: output::ColorChoice,
+
     /// Path to database file (default: $XDG_DATA_HOME/ranger/ranger.db)
     #[arg(long, env = "RANGER_DB", global = true)]
     db: Option<PathBuf>,
@@ -92,6 +96,7 @@ fn main() -> miette::Result<()> {
 
 async fn async_main() -> miette::Result<()> {
     let cli = Cli::parse();
+    output::init_color(cli.color);
     let db_path = resolve_db_path(cli.db);
     let pool = ranger::db::connect(&db_path).await?;
 

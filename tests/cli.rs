@@ -170,7 +170,7 @@ fn full_workflow() {
 
     // Delete a task
     let output = ranger(db_path)
-        .args(["task", "delete", &t2_key[..4]])
+        .args(["task", "delete", &t2_key[..4], "--yes"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -454,7 +454,7 @@ fn full_workflow() {
         .output()
         .unwrap();
     let output = ranger(db_path)
-        .args(["backlog", "delete", "Throwaway"])
+        .args(["backlog", "delete", "Throwaway", "--yes"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -477,7 +477,7 @@ fn full_workflow() {
 
     // Deleting non-existent backlog fails
     let output = ranger(db_path)
-        .args(["backlog", "delete", "Nonexistent"])
+        .args(["backlog", "delete", "Nonexistent", "--yes"])
         .output()
         .unwrap();
     assert!(!output.status.success());
