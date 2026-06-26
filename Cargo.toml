@@ -22,8 +22,8 @@ maud = { version = "*", features = ["axum"] }
 thiserror = "*"
 tokio = { version = "*", features = ["full"] }
 xdg = "*"
+tempfile = "*"
 
 [dev-dependencies]
 assert_cmd = "*"
 predicates = "3.1.4"
-tempfile = "*"

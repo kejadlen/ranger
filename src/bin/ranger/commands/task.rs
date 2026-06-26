@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 
 use clap::{Args, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
@@ -284,21 +285,31 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             position,
         } => {
             let mut conn = pool.acquire().await?;
-            let anchors = position.resolve(&mut conn, backlog_scope).await?;
-
             let task = ops::task::get_by_key_prefix(&mut conn, &key, backlog_scope).await?;
-            let updated = ops::task::edit(
-                &mut conn,
-                task.id,
-                title.as_deref(),
-                description.as_deref(),
-                state,
-            )
-            .await?;
 
-            if let Some(ref anchors) = anchors {
-                ops::task::move_task(&mut conn, &updated, anchors.as_placement()).await?;
-            }
+            let updated = if title.is_none()
+                && description.is_none()
+                && state.is_none()
+                && position.before.is_none()
+                && position.after.is_none()
+            {
+                edit_in_editor(&mut conn, &task).await?
+            } else {
+                let anchors = position.resolve(&mut conn, backlog_scope).await?;
+                let updated = ops::task::edit(
+                    &mut conn,
+                    task.id,
+                    title.as_deref(),
+                    description.as_deref(),
+                    state,
+                )
+                .await?;
+
+                if let Some(ref anchors) = anchors {
+                    ops::task::move_task(&mut conn, &updated, anchors.as_placement()).await?;
+                }
+                updated
+            };
 
             let all_keys = ops::task::all_keys(&mut conn).await?;
             let prefixes = key::unique_prefix_lengths(&all_keys);
@@ -415,4 +426,63 @@ fn print_task_detail(t: &Task, prefixes: &HashMap<String, usize>) {
     if let Some(done_at) = &t.done_at {
         println!("Done:    {}", done_at);
     }
+}
+
+/// Open $EDITOR with the task fields, apply changes on save.
+async fn edit_in_editor(conn: &mut SqliteConnection, task: &Task) -> Result<Task, Error> {
+    let editor = std::env::var("EDITOR")
+        .map_err(|_| Error::Usage("EDITOR environment variable not set".into()))?;
+
+    let mut tmp = tempfile::Builder::new().prefix("ranger-edit-").tempfile()?;
+
+    // Write current task: first line is title, rest is description.
+    writeln!(tmp, "{}", task.title)?;
+    if let Some(desc) = &task.description {
+        writeln!(tmp, "{}", desc)?;
+    }
+    tmp.flush()?;
+
+    // Open editor and wait for it to finish.
+    let status = std::process::Command::new(&editor)
+        .arg(tmp.path())
+        .status()?;
+
+    if !status.success() {
+        return Err(Error::Usage(format!(
+            "editor '{}' exited with status {}",
+            editor, status
+        )));
+    }
+
+    // Parse the edited file.
+    let edited = std::fs::read_to_string(tmp.path())?;
+    let lines: Vec<&str> = edited.lines().collect();
+
+    // Trim leading and trailing empty lines.
+    let first = lines.iter().position(|l| !l.trim().is_empty());
+    let last = lines.iter().rposition(|l| !l.trim().is_empty());
+
+    let (title, description) = match (first, last) {
+        (Some(f), Some(l)) if f == l => {
+            // Single non-empty line: title only, clear description.
+            (Some(lines[f].trim().to_string()), Some(String::new()))
+        }
+        (Some(f), Some(l)) => {
+            let title = lines[f].trim().to_string();
+            let description = lines[f + 1..=l].join("\n");
+            (Some(title), Some(description))
+        }
+        _ => (None, None),
+    };
+
+    let updated = ops::task::edit(
+        conn,
+        task.id,
+        title.as_deref(),
+        description.as_deref(),
+        None,
+    )
+    .await?;
+
+    Ok(updated)
 }
