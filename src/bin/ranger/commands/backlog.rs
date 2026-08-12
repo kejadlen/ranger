@@ -64,7 +64,7 @@ pub async fn run(
         }
         BacklogCommands::List => {
             let backlogs = ops::backlog::list(&mut conn).await?;
-            output::print_list(&backlogs, json, print_backlog);
+            output::print_list(&backlogs, json, "No backlogs.", print_backlog);
         }
         BacklogCommands::Delete { name, yes } => {
             if !yes {

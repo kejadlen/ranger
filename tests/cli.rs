@@ -671,3 +671,151 @@ fn full_workflow() {
         .stdout(predicates::str::contains("ranger "))
         .stdout(predicates::str::is_match(r"ranger \S+").unwrap());
 }
+
+#[test]
+fn empty_list_prints_note_on_stderr() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+
+    // A backlog with no tasks exercises the task-list empty cases.
+    ranger(db_path)
+        .args(["backlog", "create", "Empty"])
+        .assert()
+        .success();
+
+    // Plain empty: note on stderr, stdout stays clean for pipes.
+    let output = ranger(db_path)
+        .args(["task", "list", "--backlog", "Empty"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout).unwrap().is_empty(),
+        "stdout must stay clean when the list is empty"
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "No tasks in backlog 'Empty'."
+    );
+
+    // State filter: adjective form, with snake_case rendered as hyphenated.
+    let output = ranger(db_path)
+        .args(["task", "list", "--backlog", "Empty", "--state", "ready"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "No ready tasks in backlog 'Empty'."
+    );
+    let output = ranger(db_path)
+        .args([
+            "task",
+            "list",
+            "--backlog",
+            "Empty",
+            "--state",
+            "in_progress",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "No in-progress tasks in backlog 'Empty'."
+    );
+
+    // Tag filter only.
+    let output = ranger(db_path)
+        .args(["task", "list", "--backlog", "Empty", "--tag", "bug"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "No tasks tagged #bug in backlog 'Empty'."
+    );
+
+    // State + tag together.
+    let output = ranger(db_path)
+        .args([
+            "task",
+            "list",
+            "--backlog",
+            "Empty",
+            "--state",
+            "ready",
+            "--tag",
+            "bug",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "No ready tasks tagged #bug in backlog 'Empty'."
+    );
+
+    // JSON mode keeps printing [] and emits no note.
+    let output = ranger(db_path)
+        .args(["task", "list", "--backlog", "Empty", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "[]");
+    assert!(String::from_utf8(output.stderr).unwrap().is_empty());
+
+    // The all-tasks path (no backlog filter) on a DB whose only backlog is empty.
+    let output = ranger(db_path)
+        .env_remove("RANGER_DEFAULT_BACKLOG")
+        .args(["task", "list"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "No tasks."
+    );
+}
+
+#[test]
+fn empty_lists_other_commands() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+
+    ranger(db_path)
+        .args(["backlog", "create", "Ranger"])
+        .assert()
+        .success();
+    let t1 = ranger(db_path)
+        .args(["task", "create", "Lonely task", "--json"])
+        .output()
+        .unwrap();
+    let t1_key: String = serde_json::from_slice::<serde_json::Value>(&t1.stdout).unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // comment list on a task with no comments.
+    let output = ranger(db_path)
+        .args(["comment", "list", &t1_key])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout).unwrap().is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.starts_with("No comments on task "), "got: {stderr}");
+
+    // tag prune with no unused tags.
+    let output = ranger(db_path).args(["tag", "prune"]).output().unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout).unwrap().is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim(),
+        "No unused tags to remove."
+    );
+
+    // tag list with no tags anywhere.
+    let output = ranger(db_path)
+        .args(["tag", "list", "--all"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(output.stderr).unwrap().trim(), "No tags.");
+}

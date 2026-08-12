@@ -46,7 +46,8 @@ pub async fn run(
         CommentCommands::List { task } => {
             let t = ops::task::get_by_key_prefix(&mut conn, &task, backlog_scope).await?;
             let comments = ops::comment::list(&mut conn, t.id).await?;
-            output::print_list(&comments, json, |c| {
+            let note = format!("No comments on task {}.", t.key);
+            output::print_list(&comments, json, &note, |c| {
                 println!("[{}] {}", c.created_at, c.body);
             });
         }

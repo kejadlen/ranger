@@ -53,9 +53,17 @@ pub fn print<T: Serialize + std::fmt::Debug>(value: &T, json: bool, human: impl 
     }
 }
 
-pub fn print_list<T: Serialize + std::fmt::Debug>(values: &[T], json: bool, human: impl Fn(&T)) {
+pub fn print_list<T: Serialize + std::fmt::Debug>(
+    values: &[T],
+    json: bool,
+    empty_note: &str,
+    human: impl Fn(&T),
+) {
     if json {
         println!("{}", serde_json::to_string_pretty(values).unwrap());
+    } else if values.is_empty() {
+        // Stderr so a pipe still sees an empty stdout; `--json` keeps printing `[]`.
+        eprintln!("{empty_note}");
     } else {
         for v in values {
             human(v);

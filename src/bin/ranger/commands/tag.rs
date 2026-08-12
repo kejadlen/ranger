@@ -65,18 +65,14 @@ pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<
             } else {
                 ops::tag::list_all(&mut conn).await?
             };
-            output::print_list(&tags, json, |t| println!("{}", t.name));
+            output::print_list(&tags, json, "No tags.", |t| println!("{}", t.name));
         }
         TagCommands::Prune { apply } => {
             let pruned = ops::tag::prune(&mut conn, !apply).await?;
-            if pruned.is_empty() {
-                if !json {
-                    println!("No unused tags to remove.");
-                }
-            } else {
-                let label = if apply { "Removed" } else { "Would remove" };
-                output::print_list(&pruned, json, |t| println!("{}: {}", label, t.name));
-            }
+            let label = if apply { "Removed" } else { "Would remove" };
+            output::print_list(&pruned, json, "No unused tags to remove.", |t| {
+                println!("{}: {}", label, t.name)
+            });
         }
     }
     Ok(())

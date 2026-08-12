@@ -228,7 +228,8 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 let backlog_keys = ops::task::keys_for_backlog(&mut conn, bl.id).await?;
                 let prefixes = key::unique_prefix_lengths(&backlog_keys);
                 let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
-                output::print_list(&tasks, json, |t| print_task(t, &prefixes));
+                let note = empty_task_note(&filter, Some(backlog_name));
+                output::print_list(&tasks, json, &note, |t| print_task(t, &prefixes));
             } else {
                 // List all tasks (no backlog filter)
                 let all_keys = ops::task::all_keys(&mut conn).await?;
@@ -243,7 +244,8 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                         }
                     }
                 }
-                output::print_list(&all_tasks, json, |t| print_task(t, &prefixes));
+                let note = empty_task_note(&filter, None);
+                output::print_list(&all_tasks, json, &note, |t| print_task(t, &prefixes));
             }
         }
         TaskCommands::Show { key } => {
@@ -400,6 +402,27 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
         }
     }
     Ok(())
+}
+
+/// Describe an empty `task list` result, echoing the filters that were applied.
+fn empty_task_note(filter: &ListFilter, backlog: Option<&str>) -> String {
+    let mut note = String::from("No ");
+    if let Some(state) = &filter.state {
+        note.push_str(&state.as_str().replace('_', "-"));
+        note.push(' ');
+    }
+    note.push_str("tasks");
+    if let Some(tag) = &filter.tag {
+        note.push_str(" tagged #");
+        note.push_str(tag);
+    }
+    if let Some(name) = backlog {
+        note.push_str(" in backlog '");
+        note.push_str(name);
+        note.push('\'');
+    }
+    note.push('.');
+    note
 }
 
 fn print_task(t: &Task, prefixes: &HashMap<String, usize>) {
