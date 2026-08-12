@@ -463,13 +463,13 @@ async fn edit_in_editor(conn: &mut SqliteConnection, task: &Task) -> Result<Task
     let last = lines.iter().rposition(|l| !l.trim().is_empty());
 
     let (title, description) = match (first, last) {
-        (Some(f), Some(l)) if f == l => {
-            // Single non-empty line: title only, clear description.
-            (Some(lines[f].trim().to_string()), Some(String::new()))
-        }
         (Some(f), Some(l)) => {
             let title = lines[f].trim().to_string();
-            let description = lines[f + 1..=l].join("\n");
+            // Drop the blank lines separating the title from the body; an
+            // all-blank body clears the description.
+            let body = &lines[f + 1..=l];
+            let start = body.iter().position(|line| !line.trim().is_empty());
+            let description = start.map(|s| body[s..].join("\n")).unwrap_or_default();
             (Some(title), Some(description))
         }
         _ => (None, None),
