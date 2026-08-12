@@ -9,6 +9,149 @@ fn ranger(db_path: &str) -> Command {
     cmd
 }
 
+/// Write an executable stand-in for `$EDITOR` that overwrites the file it is
+/// handed with `contents`, and return its path.
+#[cfg(unix)]
+fn editor_writing(dir: &std::path::Path, name: &str, contents: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = dir.join(name);
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\ncat > \"$1\" <<'RANGER_EOF'\n{contents}RANGER_EOF\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_str().unwrap().to_string()
+}
+
+/// Write an executable stand-in for `$EDITOR` that leaves the file alone and
+/// exits with `code`, and return its path.
+#[cfg(unix)]
+fn editor_exiting(dir: &std::path::Path, name: &str, code: u8) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\nexit {code}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_str().unwrap().to_string()
+}
+
+#[cfg(unix)]
+fn task_detail(db_path: &str, key: &str) -> serde_json::Value {
+    let output = ranger(db_path)
+        .args(["task", "show", key, "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn edit_without_flags_opens_editor() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+
+    ranger(db_path)
+        .args(["backlog", "create", "Ranger"])
+        .assert()
+        .success();
+    ranger(db_path)
+        .args([
+            "task",
+            "create",
+            "Original title",
+            "--description",
+            "Original description",
+        ])
+        .assert()
+        .success();
+
+    let output = ranger(db_path)
+        .args(["task", "list", "--json"])
+        .output()
+        .unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let key = tasks[0]["key"].as_str().unwrap().to_string();
+
+    // Title on the first line, body below — blank separator and surrounding
+    // blank lines are dropped, interior ones survive.
+    let editor = editor_writing(
+        dir.path(),
+        "replace.sh",
+        "\n  Edited title  \n\nFirst paragraph\n\nSecond paragraph\n\n\n",
+    );
+    ranger(db_path)
+        .env("EDITOR", &editor)
+        .args(["task", "edit", &key[..4]])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Edited title"));
+
+    let detail = task_detail(db_path, &key[..4]);
+    assert_eq!(detail["task"]["title"], "Edited title");
+    assert_eq!(
+        detail["task"]["description"],
+        "First paragraph\n\nSecond paragraph"
+    );
+
+    // A body left empty clears the description.
+    let editor = editor_writing(dir.path(), "title_only.sh", "Just a title\n");
+    ranger(db_path)
+        .env("EDITOR", &editor)
+        .args(["task", "edit", &key[..4]])
+        .assert()
+        .success();
+
+    let detail = task_detail(db_path, &key[..4]);
+    assert_eq!(detail["task"]["title"], "Just a title");
+    assert_eq!(detail["task"]["description"], "");
+
+    // An entirely blank file leaves the task alone rather than wiping the title.
+    let editor = editor_writing(dir.path(), "blank.sh", "\n   \n\n");
+    ranger(db_path)
+        .env("EDITOR", &editor)
+        .args(["task", "edit", &key[..4]])
+        .assert()
+        .success();
+
+    let detail = task_detail(db_path, &key[..4]);
+    assert_eq!(detail["task"]["title"], "Just a title");
+
+    // A failed editor aborts the edit.
+    let editor = editor_exiting(dir.path(), "fail.sh", 1);
+    ranger(db_path)
+        .env("EDITOR", &editor)
+        .args(["task", "edit", &key[..4]])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("fail.sh"));
+
+    let detail = task_detail(db_path, &key[..4]);
+    assert_eq!(detail["task"]["title"], "Just a title");
+
+    // Without $EDITOR there is nothing to open.
+    ranger(db_path)
+        .env_remove("EDITOR")
+        .args(["task", "edit", &key[..4]])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("EDITOR"));
+
+    // Flags still take the non-interactive path — a failing editor is never run.
+    let editor = editor_exiting(dir.path(), "unused.sh", 1);
+    ranger(db_path)
+        .env("EDITOR", &editor)
+        .args(["task", "edit", &key[..4], "--title", "Set by flag"])
+        .assert()
+        .success();
+
+    let detail = task_detail(db_path, &key[..4]);
+    assert_eq!(detail["task"]["title"], "Set by flag");
+}
+
 #[test]
 fn full_workflow() {
     let dir = tempdir().unwrap();
