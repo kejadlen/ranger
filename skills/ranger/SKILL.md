@@ -20,9 +20,13 @@ ranger backlog list                  # List all backlogs
 # Tasks
 ranger task create --backlog <name> "Title"   # Create a task
 ranger task create --backlog <name> --state ready --description "..." "Title"
+ranger task create --backlog <name> -B <other> "Title"   # Create already in position
 ranger task list --backlog <name>             # List tasks
+ranger task list --state ready --tag bug      # Filter by state and/or tag
+ranger task list --archived                   # Include archived tasks
 ranger task show <key>                        # Show task details
 ranger task edit <key> --state <state>        # Change task state
+ranger task edit <key>                        # No flags: opens $EDITOR (title on line 1, description below)
 ranger task move <key> -B <other>             # Reorder: place before another task
 ranger task move <key> -A <other>             # Reorder: place after another task
 ranger task archive <key>                     # Archive a task (hide without deleting)
@@ -47,7 +51,25 @@ ranger tag prune                             # Remove tags no longer attached to
 
 Task states for `--state`: `icebox`, `ready`, `in_progress`, `done`.
 
-The `RANGER_DEFAULT_BACKLOG` env var sets the default `--backlog` value so you can omit it.
+Every command needs its noun: `ranger task list`, never `ranger list`; `ranger task show <key>`, never `ranger show`, `ranger view`, or `ranger task get`. Add `--json` to any command for machine-readable output.
+
+Ranger has no blocker or dependency model — there is no `ranger blocker`. Record a blocker as a comment on the task.
+
+Flags are spelled out in full: `--description`, not `--desc`; `--backlog` has no `-b` short form. Only `task create` and `task list` take `--backlog` at all.
+
+`-B`/`-A` work on `task create` and `task edit` too, so creating or editing in position needs no separate `task move`.
+
+`tag add` takes one tag per invocation — `ranger tag add <key> mirror config` fails on the second word.
+
+### Backlog scoping
+
+The `RANGER_DEFAULT_BACKLOG` env var sets the default `--backlog` value so you can omit it. It also scopes *key lookup*: every command that takes a task key resolves it only within that backlog. Since none of them accept `--backlog`, reaching a task in another backlog means overriding the env var for the call:
+
+```bash
+RANGER_DEFAULT_BACKLOG=other ranger task move <key> -B <anchor>
+```
+
+A key that plainly exists but errors with `no key matching prefix` is this — wrong backlog, not a wrong key.
 
 Task keys are short prefixes (e.g. `tl`) of longer IDs — use just enough to be unique. There is no `--top` or `--bottom` flag; to move to the top, use `-B` with the first task's key.
 
@@ -77,4 +99,4 @@ Top of the queue = most important. Bias toward quick wins — small easy tasks s
 
 ---
 
-*This is a self-improving skill — see the `self-improving-skills` skill.*
+*This is a self-improving skill. If you used it and it came up short — a missing command, flag, gotcha, or workflow — invoke the `self-improving-skills` skill and follow it before you finish.*
