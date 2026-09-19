@@ -1,5 +1,4 @@
-use clap::Subcommand;
-use clap_complete::engine::ArgValueCompleter;
+use lexopt::prelude::*;
 use ranger::db::SqlitePool;
 use ranger::error::RangerError;
 use ranger::key;
@@ -7,47 +6,118 @@ use ranger::models::{Backlog, State};
 use ranger::ops;
 use ranger::ops::task::ListFilter;
 
-use crate::completions;
+use crate::cli::{self, Globals, OwnedArg};
 use crate::output;
 
-#[derive(Subcommand)]
-pub enum BacklogCommands {
-    /// Create a new backlog
-    #[command(visible_alias = "new")]
-    Create {
-        /// Name for the backlog
-        name: String,
-    },
-    /// List all backlogs
-    #[command(visible_alias = "ls")]
-    List,
-    /// Show a backlog's details
-    #[command(visible_alias = "s")]
-    Show {
-        /// Backlog name
-        #[arg(env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        name: String,
+const HELP: &str = "\
+Manage backlogs
 
-        /// Show only done tasks
-        #[arg(long)]
-        done: bool,
-    },
-    /// Delete a backlog and all its tasks
-    #[command(visible_alias = "rm")]
-    Delete {
-        /// Backlog name
-        #[arg(add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        name: String,
-        /// Skip the confirmation prompt
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-    /// Rebalance task positions in a backlog
-    Rebalance {
-        /// Backlog name
-        #[arg(env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        name: String,
-    },
+Usage: ranger backlog [OPTIONS] <COMMAND>
+
+Commands:
+  create <NAME>             Create a new backlog [alias: new]
+  list                      List all backlogs [alias: ls]
+  show [NAME] [--done]      Show a backlog's details [alias: s]
+  delete <NAME> [-y|--yes]  Delete a backlog and all its tasks [alias: rm]
+  rebalance [NAME]          Rebalance task positions in a backlog
+
+NAME defaults to $RANGER_DEFAULT_BACKLOG for show and rebalance.
+
+Options:
+      --done          Show only done tasks (show)
+  -y, --yes           Skip the confirmation prompt (delete)
+      --json          Output as JSON
+      --color <WHEN>  When to colorize output [auto|always|never]
+      --db <PATH>     Path to database file [env: RANGER_DB]
+  -h, --help          Print help
+";
+
+pub enum BacklogCommands {
+    Create { name: String },
+    List,
+    Show { name: String, done: bool },
+    Delete { name: String, yes: bool },
+    Rebalance { name: String },
+}
+
+pub fn parse(
+    parser: &mut lexopt::Parser,
+    globals: &mut Globals,
+) -> Result<BacklogCommands, lexopt::Error> {
+    let sub = cli::subcommand(parser, globals, HELP)?;
+    Ok(match sub.as_str() {
+        "create" | "new" => {
+            let mut name = None;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Value(v) if name.is_none() => name = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            BacklogCommands::Create {
+                name: cli::required(name, "<NAME>")?,
+            }
+        }
+        "list" | "ls" => {
+            cli::drain(parser, globals, HELP)?;
+            BacklogCommands::List
+        }
+        "show" | "s" => {
+            let mut name = None;
+            let mut done = false;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Long("done") => done = true,
+                    Value(v) if name.is_none() => name = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            BacklogCommands::Show {
+                name: cli::required(name.or_else(cli::default_backlog), "<NAME>")?,
+                done,
+            }
+        }
+        "delete" | "rm" => {
+            let mut name = None;
+            let mut yes = false;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Short('y') | Long("yes") => yes = true,
+                    Value(v) if name.is_none() => name = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            BacklogCommands::Delete {
+                name: cli::required(name, "<NAME>")?,
+                yes,
+            }
+        }
+        "rebalance" => {
+            let mut name = None;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Value(v) if name.is_none() => name = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            BacklogCommands::Rebalance {
+                name: cli::required(name.or_else(cli::default_backlog), "<NAME>")?,
+            }
+        }
+        _ => return Err(cli::error(format!("unrecognized backlog command '{sub}'"))),
+    })
 }
 
 pub async fn run(

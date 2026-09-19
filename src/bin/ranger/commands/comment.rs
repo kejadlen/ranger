@@ -1,30 +1,75 @@
-use clap::Subcommand;
-use clap_complete::engine::ArgValueCompleter;
+use lexopt::prelude::*;
 use ranger::db::SqlitePool;
 use ranger::error::RangerError;
 use ranger::ops;
 
-use crate::completions;
+use crate::cli::{self, Globals, OwnedArg};
 use crate::output;
 
-#[derive(Subcommand)]
+const HELP: &str = "\
+Manage comments
+
+Usage: ranger comment [OPTIONS] <COMMAND>
+
+Commands:
+  add <TASK> <BODY>  Add a comment to a task [alias: a]
+  list <TASK>        List comments on a task [alias: ls]
+
+TASK may be any unique task key prefix.
+
+Options:
+      --json          Output as JSON
+      --color <WHEN>  When to colorize output [auto|always|never]
+      --db <PATH>     Path to database file [env: RANGER_DB]
+  -h, --help          Print help
+";
+
 pub enum CommentCommands {
-    /// Add a comment to a task
-    #[command(visible_alias = "a")]
-    Add {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
-        task: String,
-        /// Comment body
-        body: String,
-    },
-    /// List comments on a task
-    #[command(visible_alias = "ls")]
-    List {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
-        task: String,
-    },
+    Add { task: String, body: String },
+    List { task: String },
+}
+
+pub fn parse(
+    parser: &mut lexopt::Parser,
+    globals: &mut Globals,
+) -> Result<CommentCommands, lexopt::Error> {
+    let sub = cli::subcommand(parser, globals, HELP)?;
+    Ok(match sub.as_str() {
+        "add" | "a" => {
+            let mut task = None;
+            let mut body = None;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Value(v) if task.is_none() => task = Some(v.string()?),
+                    Value(v) if body.is_none() => body = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            CommentCommands::Add {
+                task: cli::required(task, "<TASK>")?,
+                body: cli::required(body, "<BODY>")?,
+            }
+        }
+        "list" | "ls" => {
+            let mut task = None;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Value(v) if task.is_none() => task = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            CommentCommands::List {
+                task: cli::required(task, "<TASK>")?,
+            }
+        }
+        _ => return Err(cli::error(format!("unrecognized comment command '{sub}'"))),
+    })
 }
 
 pub async fn run(
