@@ -77,17 +77,14 @@ When installing system packages (`apt-get`), adding Rust components (`rustup com
 
 ## CI and Releases
 
-Two-forge setup:
-
-- **Gitea** (`origin`) is the source of truth. CI runs on Forgejo Actions (`.gitea/workflows/`). On push to `main` and PRs.
-- **GitHub** (`github` remote) is a mirror. Receives tags from Gitea and builds release artifacts.
+- **quire** (`origin`) is the source of truth. It mirrors to Gitea and GitHub (`.quire/config.fnl`).
+- **Gitea** (`gitea` remote) is a plain mirror.
+- **GitHub** (`github` remote) is a mirror. Runs CI and builds release artifacts.
 
 Release flow:
 
-1. Gitea CI passes on `main`.
-2. Gitea release workflow creates a `vYYYY-MM-DD+<short-sha>` tag and pushes it.
-3. Tag mirrors to GitHub.
-4. GitHub release workflow (`.github/workflows/release.yml`) triggers on tag push, builds macOS and Linux binaries, creates a GitHub release, and publishes Dotslash configuration.
+1. quire mirrors `main` to GitHub.
+2. GitHub CI workflow (`.github/workflows/ci.yml`) triggers on the push, runs CI, and once it passes creates a `vYYYY-MM-DD+<short-sha>` tag and GitHub release, builds macOS and Linux binaries, and publishes Dotslash configuration. It skips a SHA that already has a release that day.
 
 ## VCS
 

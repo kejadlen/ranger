@@ -88,10 +88,7 @@ The CLI exists primarily so AI agents can manage tasks programmatically. The web
 
 ## Releases
 
-Ranger uses a two-forge release pipeline:
-
-1. **Gitea** (`git.kejadlen.dev`) is the source of truth. CI runs on every push to `main` (and on PRs). When CI passes, a `vYYYY-MM-DD+<short-sha>` tag is created automatically.
-2. Tags mirror to **GitHub** (`github.com/kejadlen/ranger`). A tag push triggers the release workflow, which builds macOS and Linux binaries, creates a GitHub release, and publishes Dotslash configuration.
+Ranger's source of truth is a quire repository, which mirrors to Gitea (`git.kejadlen.dev`) and **GitHub** (`github.com/kejadlen/ranger`). Each push to `main` on GitHub triggers the CI workflow, which runs checks and, once it passes, tags the commit `vYYYY-MM-DD+<short-sha>`, builds macOS and Linux binaries, creates a GitHub release, and publishes Dotslash configuration.
 
 The version format is calver: the date of the commit plus its short SHA (e.g., `v2026-04-21+abc1234`).
 

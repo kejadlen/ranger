@@ -1,14 +1,68 @@
-name: Release
+name: CI
 
-on: # zizmor: ignore[dangerous-triggers] -- only triggers on tag pushes from Gitea mirror; no fork PR risk.
+on: # zizmor: ignore[dangerous-triggers] -- only triggers on main pushes from the quire mirror; no fork PR risk.
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
 permissions: {}
 
 jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - run: |
+          curl -sL https://github.com/facebook/dotslash/releases/download/v0.5.9/dotslash-linux-musl.x86_64.tar.gz |
+            tar xz -C /usr/local/bin
+      - run: echo "$PWD/bin" >> "$GITHUB_PATH"
+
+      - run: rustup component add clippy rustfmt llvm-tools
+      - run: cargo fmt --check
+      - run: just clippy coverage
+
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - run: |
+          curl -sL https://github.com/facebook/dotslash/releases/download/v0.5.9/dotslash-linux-musl.x86_64.tar.gz |
+            tar xz -C /usr/local/bin
+      - run: echo "$PWD/bin" >> "$GITHUB_PATH"
+
+      - run: zizmor .github
+
+  version:
+    needs: [ci, zizmor]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # look up existing releases.
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.version.outputs.exists }}
+    steps:
+      - name: Calculate version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(date -u +%Y-%m-%d)+${GITHUB_SHA::7}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release ${TAG} already exists, skipping"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-macos:
+    needs: version
+    if: needs.version.outputs.exists == 'false'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -26,6 +80,8 @@ jobs:
           path: ranger-aarch64-apple-darwin.tar.gz
 
   build-linux:
+    needs: version
+    if: needs.version.outputs.exists == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -44,7 +100,7 @@ jobs:
           path: ranger-aarch64-unknown-linux-gnu.tar.gz
 
   publish:
-    needs: [build-macos, build-linux]
+    needs: [version, build-macos, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -59,17 +115,18 @@ jobs:
 
       - name: Publish
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
             --generate-notes \
             ranger-aarch64-apple-darwin.tar.gz \
             ranger-aarch64-unknown-linux-gnu.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
 
   dotslash:
-    needs: publish
+    needs: [version, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,4 +137,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           config: .github/workflows/dotslash-config.json
-          tag: ${{ github.ref_name }}
+          tag: ${{ needs.version.outputs.tag }}
