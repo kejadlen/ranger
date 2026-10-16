@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use clap::{Args, Subcommand};
-use clap_complete::engine::ArgValueCompleter;
+use lexopt::prelude::*;
 use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::error::RangerError as Error;
 use ranger::key;
@@ -10,17 +9,46 @@ use ranger::models::{State, Task};
 use ranger::ops;
 use ranger::ops::task::{ListFilter, Placement};
 
-use crate::completions;
+use crate::cli::{self, Globals, OwnedArg};
 use crate::output;
 
+const HELP: &str = "\
+Manage tasks
+
+Usage: ranger task [OPTIONS] <COMMAND>
+
+Commands:
+  create <TITLE>   Create a new task [alias: new]
+      [--backlog <NAME>] [--description <TEXT>] [--state <STATE>]
+      [-B|--before <KEY>] [-A|--after <KEY>]
+  list             List tasks [alias: ls]
+      [--backlog <NAME>] [--state <STATE>] [--tag <TAG>] [--archived]
+  show <KEY>       Show task details [alias: s]
+  edit <KEY>       Edit a task [alias: e]
+      [--title <TITLE>] [--description <TEXT>] [--state <STATE>]
+      [-B|--before <KEY>] [-A|--after <KEY>]
+  move <KEY>       Move a task's position within its backlog [alias: mv]
+      (-B|--before <KEY> | -A|--after <KEY>)
+  delete <KEY> [-y|--yes]  Delete a task entirely [alias: del]
+  archive <KEY>    Archive a task
+  unarchive <KEY>  Unarchive a task
+
+KEY may be any unique key prefix. STATE is one of icebox, ready,
+in_progress, done. --backlog defaults to $RANGER_DEFAULT_BACKLOG.
+
+Options:
+      --json          Output as JSON
+      --color <WHEN>  When to colorize output [auto|always|never]
+      --db <PATH>     Path to database file [env: RANGER_DB]
+  -h, --help          Print help
+";
+
 /// Positioning flags shared by create, edit, and move.
-#[derive(Args)]
+#[derive(Default)]
 pub struct PositionArgs {
     /// Place before this task key
-    #[arg(long, short = 'B', add = ArgValueCompleter::new(completions::complete_task_keys))]
     before: Option<String>,
     /// Place after this task key
-    #[arg(long, short = 'A', add = ArgValueCompleter::new(completions::complete_task_keys))]
     after: Option<String>,
 }
 
@@ -65,100 +93,201 @@ impl PositionAnchors {
     }
 }
 
-#[derive(Subcommand)]
 pub enum TaskCommands {
-    /// Create a new task
-    #[command(visible_alias = "new")]
     Create {
-        /// Task title
         title: String,
-        /// Backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
         backlog: String,
-        /// Task description
-        #[arg(long)]
         description: Option<String>,
-        /// Initial state
-        #[arg(long)]
         state: Option<State>,
-        #[command(flatten)]
         position: PositionArgs,
     },
-    /// List tasks
-    #[command(visible_alias = "ls")]
     List {
-        /// Filter by backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
         backlog: Option<String>,
-        /// Filter by state
-        #[arg(long)]
         state: Option<State>,
-        /// Filter by tag
-        #[arg(long)]
         tag: Option<String>,
-        /// Include archived tasks
-        #[arg(long)]
         archived: bool,
     },
-    /// Show task details
-    #[command(visible_alias = "s")]
     Show {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
     },
-    /// Edit a task
-    #[command(visible_alias = "e")]
     Edit {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
-        /// New title
-        #[arg(long)]
         title: Option<String>,
-        /// New description
-        #[arg(long)]
         description: Option<String>,
-        /// New state
-        #[arg(long)]
         state: Option<State>,
-        #[command(flatten)]
         position: PositionArgs,
     },
-    /// Move a task's position within its backlog
-    #[command(visible_alias = "mv")]
     Move {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
-        #[command(flatten)]
         position: PositionArgs,
     },
-
-    /// Delete a task entirely
-    #[command(visible_alias = "del")]
     Delete {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
-        /// Skip the confirmation prompt
-        #[arg(long, short = 'y')]
         yes: bool,
     },
-
-    /// Archive a task
     Archive {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
     },
-
-    /// Unarchive a task
     Unarchive {
-        /// Task key or prefix
-        #[arg(add = ArgValueCompleter::new(completions::complete_task_keys))]
         key: String,
     },
+}
+
+pub fn parse(
+    parser: &mut lexopt::Parser,
+    globals: &mut Globals,
+) -> Result<TaskCommands, lexopt::Error> {
+    let sub = cli::subcommand(parser, globals, HELP)?;
+    Ok(match sub.as_str() {
+        "create" | "new" => {
+            let mut title = None;
+            let mut backlog = None;
+            let mut description = None;
+            let mut state = None;
+            let mut position = PositionArgs::default();
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Long("backlog") => backlog = Some(parser.value()?.string()?),
+                    Long("description") => description = Some(parser.value()?.string()?),
+                    Long("state") => state = Some(parser.value()?.parse()?),
+                    Short('B') | Long("before") => {
+                        position.before = Some(parser.value()?.string()?)
+                    }
+                    Short('A') | Long("after") => position.after = Some(parser.value()?.string()?),
+                    Value(v) if title.is_none() => title = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            TaskCommands::Create {
+                title: cli::required(title, "<TITLE>")?,
+                backlog: cli::required(backlog.or_else(cli::default_backlog), "--backlog")?,
+                description,
+                state,
+                position,
+            }
+        }
+        "list" | "ls" => {
+            let mut backlog = None;
+            let mut state = None;
+            let mut tag = None;
+            let mut archived = false;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Long("backlog") => backlog = Some(parser.value()?.string()?),
+                    Long("state") => state = Some(parser.value()?.parse()?),
+                    Long("tag") => tag = Some(parser.value()?.string()?),
+                    Long("archived") => archived = true,
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            TaskCommands::List {
+                backlog: backlog.or_else(cli::default_backlog),
+                state,
+                tag,
+                archived,
+            }
+        }
+        "show" | "s" => TaskCommands::Show {
+            key: parse_key(parser, globals)?,
+        },
+        "edit" | "e" => {
+            let mut key = None;
+            let mut title = None;
+            let mut description = None;
+            let mut state = None;
+            let mut position = PositionArgs::default();
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Long("title") => title = Some(parser.value()?.string()?),
+                    Long("description") => description = Some(parser.value()?.string()?),
+                    Long("state") => state = Some(parser.value()?.parse()?),
+                    Short('B') | Long("before") => {
+                        position.before = Some(parser.value()?.string()?)
+                    }
+                    Short('A') | Long("after") => position.after = Some(parser.value()?.string()?),
+                    Value(v) if key.is_none() => key = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            TaskCommands::Edit {
+                key: cli::required(key, "<KEY>")?,
+                title,
+                description,
+                state,
+                position,
+            }
+        }
+        "move" | "mv" => {
+            let mut key = None;
+            let mut position = PositionArgs::default();
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Short('B') | Long("before") => {
+                        position.before = Some(parser.value()?.string()?)
+                    }
+                    Short('A') | Long("after") => position.after = Some(parser.value()?.string()?),
+                    Value(v) if key.is_none() => key = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            TaskCommands::Move {
+                key: cli::required(key, "<KEY>")?,
+                position,
+            }
+        }
+        "delete" | "del" => {
+            let mut key = None;
+            let mut yes = false;
+            while let Some(arg) = parser.next()? {
+                match arg {
+                    Short('y') | Long("yes") => yes = true,
+                    Value(v) if key.is_none() => key = Some(v.string()?),
+                    other => {
+                        let other = OwnedArg::from(other);
+                        globals.consume(other, parser, HELP)?;
+                    }
+                }
+            }
+            TaskCommands::Delete {
+                key: cli::required(key, "<KEY>")?,
+                yes,
+            }
+        }
+        "archive" => TaskCommands::Archive {
+            key: parse_key(parser, globals)?,
+        },
+        "unarchive" => TaskCommands::Unarchive {
+            key: parse_key(parser, globals)?,
+        },
+        _ => return Err(cli::error(format!("unrecognized task command '{sub}'"))),
+    })
+}
+
+/// Parse a subcommand whose only argument is a task key.
+fn parse_key(parser: &mut lexopt::Parser, globals: &mut Globals) -> Result<String, lexopt::Error> {
+    let mut key = None;
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Value(v) if key.is_none() => key = Some(v.string()?),
+            other => {
+                let other = OwnedArg::from(other);
+                globals.consume(other, parser, HELP)?;
+            }
+        }
+    }
+    cli::required(key, "<KEY>")
 }
 
 /// Resolve `RANGER_DEFAULT_BACKLOG` to a backlog ID, if set.

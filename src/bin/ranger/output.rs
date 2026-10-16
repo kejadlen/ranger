@@ -4,7 +4,7 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// When to colorize human-readable output.
-#[derive(Clone, Copy, Default, clap::ValueEnum)]
+#[derive(Clone, Copy, Default)]
 pub enum ColorChoice {
     /// Colorize when stdout is a terminal (and `NO_COLOR`/`TERM=dumb` are unset).
     #[default]
@@ -13,6 +13,20 @@ pub enum ColorChoice {
     Always,
     /// Never colorize.
     Never,
+}
+
+impl std::str::FromStr for ColorChoice {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto" => Ok(ColorChoice::Auto),
+            "always" => Ok(ColorChoice::Always),
+            "never" => Ok(ColorChoice::Never),
+            _ => Err(format!(
+                "invalid value '{s}' (expected auto, always, or never)"
+            )),
+        }
+    }
 }
 
 static USE_COLOR: AtomicBool = AtomicBool::new(false);

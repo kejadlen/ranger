@@ -12,8 +12,7 @@ axum = "*"
 miette = { version = "*", features = ["fancy"] }
 tracing-subscriber = { version = "*", features = ["env-filter"] }
 jiff = { version = "*", features = ["serde"] }
-clap = { version = "*", features = ["derive", "env", "unstable-ext"] }
-clap_complete = { version = "*", features = ["unstable-dynamic"] }
+lexopt = "*"
 rand = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"

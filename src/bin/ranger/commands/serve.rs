@@ -17,6 +17,44 @@ use tokio::net::TcpListener;
 const STYLE_CSS: &str = include_str!("../../../../static/style.css");
 const BOARD_JS: &str = include_str!("../../../../static/board.js");
 
+const HELP: &str = "\
+Start the web server
+
+Usage: ranger serve [OPTIONS]
+
+Options:
+      --port <PORT>      Port to listen on [default: 3000]
+      --backlog <NAME>   Default backlog to display [env: RANGER_DEFAULT_BACKLOG]
+      --json             Output as JSON
+      --color <WHEN>     When to colorize output [auto|always|never]
+      --db <PATH>        Path to database file [env: RANGER_DB]
+  -h, --help             Print help
+";
+
+pub fn parse(
+    parser: &mut lexopt::Parser,
+    globals: &mut crate::cli::Globals,
+) -> Result<crate::cli::Command, lexopt::Error> {
+    use lexopt::prelude::*;
+
+    let mut port = 3000;
+    let mut backlog = None;
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Long("port") => port = parser.value()?.parse()?,
+            Long("backlog") => backlog = Some(parser.value()?.string()?),
+            other => {
+                let other = crate::cli::OwnedArg::from(other);
+                globals.consume(other, parser, HELP)?;
+            }
+        }
+    }
+    Ok(crate::cli::Command::Serve {
+        port,
+        backlog: backlog.or_else(crate::cli::default_backlog),
+    })
+}
+
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
