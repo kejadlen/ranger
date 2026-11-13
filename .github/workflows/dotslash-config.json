@@ -11,6 +11,11 @@
           "regex": "^ranger-aarch64-unknown-linux-gnu",
           "format": "tar.gz",
           "path": "ranger"
+        },
+        "linux-x86_64": {
+          "regex": "^ranger-x86_64-unknown-linux-gnu",
+          "format": "tar.gz",
+          "path": "ranger"
         }
       }
     }

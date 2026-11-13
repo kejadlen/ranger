@@ -83,21 +83,27 @@ jobs:
     needs: version
     if: needs.version.outputs.exists == 'false'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
 
       - name: Build Linux
+        env:
+          TARGET: ${{ matrix.target }}
+        # cross for both targets so they link against the same glibc baseline.
         run: |
           cargo install cross --git https://github.com/cross-rs/cross
-          cross build --release --target aarch64-unknown-linux-gnu
-          tar -czf ranger-aarch64-unknown-linux-gnu.tar.gz -C target/aarch64-unknown-linux-gnu/release ranger
+          cross build --release --target "$TARGET"
+          tar -czf "ranger-$TARGET.tar.gz" -C "target/$TARGET/release" ranger
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ranger-aarch64-unknown-linux-gnu
-          path: ranger-aarch64-unknown-linux-gnu.tar.gz
+          name: ranger-${{ matrix.target }}
+          path: ranger-${{ matrix.target }}.tar.gz
 
   publish:
     needs: [version, build-macos, build-linux]
@@ -120,7 +126,8 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             ranger-aarch64-apple-darwin.tar.gz \
-            ranger-aarch64-unknown-linux-gnu.tar.gz
+            ranger-aarch64-unknown-linux-gnu.tar.gz \
+            ranger-x86_64-unknown-linux-gnu.tar.gz
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
