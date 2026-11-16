@@ -152,9 +152,9 @@ mod tests {
         }
         pool.close().await;
 
-        // Run the remaining migrations. The backfill must agree with the
-        // parse that new tags get, and keep legacy tags that no longer parse.
-        let pool = connect(&db_path).await.unwrap();
+        // Run migration 014 alone. The backfill must agree with the parse
+        // that new tags get, and keep legacy tags that no longer parse.
+        let pool = migrate_before(&db_path, 15).await;
         let expected = [
             ("bug", "", "bug"),
             ("project:ranger", "project", "ranger"),
@@ -178,6 +178,66 @@ mod tests {
                 assert_eq!((parts.key, parts.value), (want_key, want_value), "{name}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn drop_tag_name_migration_merges_duplicates_and_keeps_links() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = migrate_before(&db_path, 15).await;
+
+        sqlx::raw_sql(
+            "INSERT INTO backlogs (id, name) VALUES (1, 'b');
+             INSERT INTO tasks (id, key, backlog_id, title, position) VALUES
+                 (1, 'kkkk', 1, 'one', 'a'),
+                 (2, 'llll', 1, 'two', 'b');
+             -- `bug` and `:bug` share a pair; `x:` becomes bare `x`, which
+             -- already exists. Task 1 is linked to both halves of each.
+             INSERT INTO tags (id, name, key, value) VALUES
+                 (1, 'bug', '', 'bug'),
+                 (2, ':bug', '', 'bug'),
+                 (3, 'x', '', 'x'),
+                 (4, 'x:', 'x', ''),
+                 (5, 'project:ranger', 'project', 'ranger');
+             INSERT INTO task_tags (task_id, tag_id) VALUES
+                 (1, 1), (1, 2), (2, 2),
+                 (1, 3), (1, 4), (2, 4),
+                 (2, 5);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = connect(&db_path).await.unwrap();
+
+        let tags: Vec<(i64, String, String)> =
+            sqlx::query_as("SELECT id, key, value FROM tags ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            tags,
+            vec![
+                (1, String::new(), "bug".to_string()),
+                (3, String::new(), "x".to_string()),
+                (5, "project".to_string(), "ranger".to_string()),
+            ]
+        );
+
+        let links: Vec<(i64, i64)> =
+            sqlx::query_as("SELECT task_id, tag_id FROM task_tags ORDER BY task_id, tag_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(links, vec![(1, 1), (1, 3), (2, 1), (2, 3), (2, 5)]);
+
+        let fk_violations: Vec<(String,)> =
+            sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(fk_violations.is_empty());
     }
 
     #[tokio::test]

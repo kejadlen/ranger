@@ -2,34 +2,29 @@ use crate::error::RangerError;
 use crate::models::{Tag, TagParts};
 use sqlx::SqliteConnection;
 
+/// Tag columns for `query_as::<_, Tag>`, deriving `name` from the key and
+/// value. Selects from a table aliased `t`.
+const TAG_COLUMNS: &str = "t.id, CASE WHEN t.key = '' THEN t.value ELSE t.key || ':' || t.value END AS name, \
+     t.key, t.value";
+
 /// Get or create a tag by name. Returns the existing tag if it already exists.
-/// `:bug` and `bug` name the same tag, which is stored as `bug`.
+/// `:bug` and `bug` name the same tag.
 pub async fn get_or_create(conn: &mut SqliteConnection, name: &str) -> Result<Tag, RangerError> {
     let parts = TagParts::try_from(name)?;
-    let name = parts.to_string();
 
-    if let Some(tag) =
-        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags WHERE name = ?")
-            .bind(&name)
-            .fetch_optional(&mut *conn)
-            .await?
-    {
-        return Ok(tag);
-    }
-
-    sqlx::query("INSERT INTO tags (name, key, value) VALUES (?, ?, ?)")
-        .bind(&name)
+    sqlx::query("INSERT OR IGNORE INTO tags (key, value) VALUES (?, ?)")
         .bind(parts.key)
         .bind(parts.value)
         .execute(&mut *conn)
         .await?;
 
-    Ok(
-        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags WHERE name = ?")
-            .bind(&name)
-            .fetch_one(&mut *conn)
-            .await?,
-    )
+    Ok(sqlx::query_as::<_, Tag>(&format!(
+        "SELECT {TAG_COLUMNS} FROM tags t WHERE t.key = ? AND t.value = ?"
+    ))
+    .bind(parts.key)
+    .bind(parts.value)
+    .fetch_one(&mut *conn)
+    .await?)
 }
 
 /// Add a tag to a task. Creates the tag if it doesn't exist. No-op if already tagged.
@@ -55,14 +50,14 @@ pub async fn remove(
     task_id: i64,
     name: &str,
 ) -> Result<(), RangerError> {
-    // Canonicalize so `:bug` removes `bug`. A name that doesn't parse can
-    // only match a tag from before parsing was enforced, so use it as is.
-    let name = TagParts::try_from(name).map_or_else(|_| name.to_string(), |p| p.to_string());
+    let parts = TagParts::try_from(name)?;
     sqlx::query(
-        "DELETE FROM task_tags WHERE task_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
+        "DELETE FROM task_tags WHERE task_id = ? \
+         AND tag_id = (SELECT id FROM tags WHERE key = ? AND value = ?)",
     )
     .bind(task_id)
-    .bind(&name)
+    .bind(parts.key)
+    .bind(parts.value)
     .execute(&mut *conn)
     .await?;
 
@@ -74,11 +69,11 @@ pub async fn list_for_task(
     conn: &mut SqliteConnection,
     task_id: i64,
 ) -> Result<Vec<Tag>, RangerError> {
-    Ok(sqlx::query_as::<_, Tag>(
-        "SELECT t.id, t.name, t.key, t.value FROM tags t \
-         JOIN task_tags tt ON t.id = tt.tag_id \
-         WHERE tt.task_id = ? ORDER BY t.name",
-    )
+    Ok(sqlx::query_as::<_, Tag>(&format!(
+        "SELECT {TAG_COLUMNS} FROM tags t \
+             JOIN task_tags tt ON t.id = tt.tag_id \
+             WHERE tt.task_id = ? ORDER BY name"
+    ))
     .bind(task_id)
     .fetch_all(&mut *conn)
     .await?)
@@ -87,7 +82,7 @@ pub async fn list_for_task(
 /// List all tags (globally).
 pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerError> {
     Ok(
-        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags ORDER BY name")
+        sqlx::query_as::<_, Tag>(&format!("SELECT {TAG_COLUMNS} FROM tags t ORDER BY name"))
             .fetch_all(&mut *conn)
             .await?,
     )
@@ -96,9 +91,10 @@ pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerErr
 /// Delete tags with no associated tasks. Returns the removed tags.
 /// If dry_run is true, returns what would be removed without deleting.
 pub async fn prune(conn: &mut SqliteConnection, dry_run: bool) -> Result<Vec<Tag>, RangerError> {
-    let orphaned = sqlx::query_as::<_, Tag>(
-        "SELECT id, name, key, value FROM tags WHERE id NOT IN (SELECT tag_id FROM task_tags) ORDER BY name",
-    )
+    let orphaned = sqlx::query_as::<_, Tag>(&format!(
+        "SELECT {TAG_COLUMNS} FROM tags t \
+             WHERE t.id NOT IN (SELECT tag_id FROM task_tags) ORDER BY name"
+    ))
     .fetch_all(&mut *conn)
     .await?;
 
@@ -116,12 +112,12 @@ pub async fn list_for_backlog(
     conn: &mut SqliteConnection,
     backlog_id: i64,
 ) -> Result<Vec<Tag>, RangerError> {
-    Ok(sqlx::query_as::<_, Tag>(
-        "SELECT DISTINCT t.id, t.name, t.key, t.value FROM tags t \
-         JOIN task_tags tt ON t.id = tt.tag_id \
-         JOIN tasks tk ON tt.task_id = tk.id \
-         WHERE tk.backlog_id = ? ORDER BY t.name",
-    )
+    Ok(sqlx::query_as::<_, Tag>(&format!(
+        "SELECT DISTINCT {TAG_COLUMNS} FROM tags t \
+             JOIN task_tags tt ON t.id = tt.tag_id \
+             JOIN tasks tk ON tt.task_id = tk.id \
+             WHERE tk.backlog_id = ? ORDER BY name"
+    ))
     .bind(backlog_id)
     .fetch_all(&mut *conn)
     .await?)
@@ -230,25 +226,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_unparseable_legacy_tag() {
+    async fn remove_rejects_empty_value() {
         let (pool, task_id, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        // Tags like `x:` can't be created anymore but may already exist.
-        sqlx::query("INSERT INTO tags (name, key, value) VALUES ('x:', 'x', '')")
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO task_tags (task_id, tag_id) SELECT ?, id FROM tags WHERE name = 'x:'",
-        )
-        .bind(task_id)
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-
-        remove(&mut conn, task_id, "x:").await.unwrap();
-        assert!(list_for_task(&mut conn, task_id).await.unwrap().is_empty());
+        assert!(remove(&mut conn, task_id, "x:").await.is_err());
     }
 
     #[tokio::test]
