@@ -136,22 +136,14 @@ pub enum InvalidTagError {
     StateKey(String),
 }
 
-impl<'a> TagParts<'a> {
-    /// Split a name on its first colon without validating it. Use this only
-    /// to look up a tag that may predate the rules in `try_from`.
-    pub fn split(name: &'a str) -> Self {
-        let (key, value) = name.split_once(':').unwrap_or(("", name));
-        TagParts { key, value }
-    }
-}
-
 impl<'a> TryFrom<&'a str> for TagParts<'a> {
     type Error = InvalidTagError;
 
     /// Rejects a name with nothing after its colon (`x:`), with whitespace,
     /// with a key starting with `-` (`-a:b`), or with the key `state`.
     fn try_from(name: &'a str) -> Result<Self, Self::Error> {
-        let parts = TagParts::split(name);
+        let (key, value) = name.split_once(':').unwrap_or(("", name));
+        let parts = TagParts { key, value };
         let err = if parts.value.is_empty() {
             InvalidTagError::EmptyValue
         } else if name.chars().any(char::is_whitespace) {
@@ -218,12 +210,12 @@ mod tests {
             }
             Err(_) => {
                 // Rejected only for a reason the rules name.
-                let parts = TagParts::split(&name);
+                let (key, value) = name.split_once(':').unwrap_or(("", &name));
                 let reasons = [
-                    parts.value.is_empty(),
+                    value.is_empty(),
                     name.chars().any(char::is_whitespace),
-                    parts.key.starts_with('-'),
-                    parts.key == "state",
+                    key.starts_with('-'),
+                    key == "state",
                 ];
                 assert!(reasons.contains(&true), "{name:?} rejected for no reason");
             }
