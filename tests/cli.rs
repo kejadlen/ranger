@@ -541,7 +541,14 @@ fn full_workflow() {
     assert!(output.status.success());
     let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(detail["tags"].is_array());
-    assert_eq!(detail["tags"].as_array().unwrap().len(), 2);
+    let tag_names: Vec<&str> = detail["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    // The backlog's project tag comes along with the two added by hand.
+    assert_eq!(tag_names, ["bug", "frontend", "project:Ranger"]);
 
     // List all tags
     let output = ranger(db_path).args(["tag", "list"]).output().unwrap();
@@ -607,7 +614,8 @@ fn full_workflow() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(tags, ["project:ranger"]);
+    // The filter's tag, plus the one mirroring the task's backlog.
+    assert_eq!(tags, ["project:Ranger", "project:ranger"]);
 
     // --state and a state: term conflict, on create and list alike
     for cmd in [
@@ -896,10 +904,11 @@ fn empty_lists_other_commands() {
         "No unused tags to remove."
     );
 
-    // tag list with no tags anywhere.
+    // tag list with only the mirrored project tags.
     let output = ranger(db_path)
         .args(["tag", "list", "--all"])
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8(output.stderr).unwrap().trim(), "No tags.");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["project:Ranger"]);
 }

@@ -209,7 +209,7 @@ mod tests {
         .unwrap();
         pool.close().await;
 
-        let pool = connect(&db_path).await.unwrap();
+        let pool = migrate_before(&db_path, 16).await;
 
         let tags: Vec<(i64, String, String)> =
             sqlx::query_as("SELECT id, key, value FROM tags ORDER BY id")
@@ -238,6 +238,56 @@ mod tests {
                 .await
                 .unwrap();
         assert!(fk_violations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn backlogs_are_mirrored_into_project_tags() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = migrate_before(&db_path, 16).await;
+
+        sqlx::raw_sql(
+            "INSERT INTO backlogs (id, name) VALUES (1, 'ranger'), (2, 'dotfiles'), (3, 'empty');
+             INSERT INTO tasks (id, key, backlog_id, title, position) VALUES
+                 (1, 'kkkk', 1, 'one', 'a'),
+                 (2, 'llll', 1, 'two', 'b'),
+                 (3, 'mmmm', 2, 'three', 'a');
+             -- One task already carries its project tag by hand.
+             INSERT INTO tags (id, key, value) VALUES (1, 'project', 'ranger'), (2, '', 'bug');
+             INSERT INTO task_tags (task_id, tag_id) VALUES (1, 1), (1, 2);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = connect(&db_path).await.unwrap();
+        let links: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT t.key, tg.key, tg.value FROM task_tags tt \
+             JOIN tasks t ON t.id = tt.task_id JOIN tags tg ON tg.id = tt.tag_id \
+             ORDER BY t.key, tg.key, tg.value",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let s = |x: &str| x.to_string();
+        assert_eq!(
+            links,
+            vec![
+                (s("kkkk"), s(""), s("bug")),
+                (s("kkkk"), s("project"), s("ranger")),
+                (s("llll"), s("project"), s("ranger")),
+                (s("mmmm"), s("project"), s("dotfiles")),
+            ]
+        );
+
+        // The empty backlog gets its tag too, ready for its first task.
+        let empty: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM tags WHERE key = 'project' AND value = 'empty'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(empty.0, 1);
     }
 
     #[tokio::test]

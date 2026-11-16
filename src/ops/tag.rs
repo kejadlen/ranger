@@ -132,6 +132,22 @@ mod tests {
     use crate::ops;
     use crate::ops::task::CreateTask;
 
+    /// Drop the `project:` tag every task gets from its backlog, so tests
+    /// can count the tags they added themselves.
+    fn user_tags(tags: Vec<Tag>) -> Vec<Tag> {
+        tags.into_iter().filter(|t| t.key != "project").collect()
+    }
+
+    #[tokio::test]
+    async fn new_tasks_carry_their_backlog_project_tag() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let tags = list_for_task(&mut conn, task_id).await.unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "project:Test");
+    }
+
     async fn setup() -> (sqlx::SqlitePool, i64, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::connect(&dir.path().join("test.db"))
@@ -225,7 +241,7 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
 
         assert!(add(&mut conn, task_id, "x:").await.is_err());
-        assert!(list_all(&mut conn).await.unwrap().is_empty());
+        assert!(user_tags(list_all(&mut conn).await.unwrap()).is_empty());
     }
 
     #[tokio::test]
@@ -233,17 +249,17 @@ mod tests {
         let (pool, task_id, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        let tag = add(&mut conn, task_id, "project:ranger").await.unwrap();
-        assert_eq!(tag.key, "project");
-        assert_eq!(tag.value, "ranger");
+        let tag = add(&mut conn, task_id, "area:cli").await.unwrap();
+        assert_eq!(tag.key, "area");
+        assert_eq!(tag.value, "cli");
 
         let bare = add(&mut conn, task_id, "bug").await.unwrap();
         assert_eq!(bare.key, "");
         assert_eq!(bare.value, "bug");
 
-        let tags = list_for_task(&mut conn, task_id).await.unwrap();
-        assert_eq!(tags[1].key, "project");
-        assert_eq!(tags[1].value, "ranger");
+        let tags = user_tags(list_for_task(&mut conn, task_id).await.unwrap());
+        assert_eq!(tags[0].key, "area");
+        assert_eq!(tags[0].value, "cli");
     }
 
     #[tokio::test]
@@ -255,10 +271,10 @@ mod tests {
         let colon = add(&mut conn, task_id, ":bug").await.unwrap();
         assert_eq!(colon.id, bare.id);
         assert_eq!(colon.name, "bug");
-        assert_eq!(list_all(&mut conn).await.unwrap().len(), 1);
+        assert_eq!(user_tags(list_all(&mut conn).await.unwrap()).len(), 1);
 
         remove(&mut conn, task_id, ":bug").await.unwrap();
-        assert!(list_for_task(&mut conn, task_id).await.unwrap().is_empty());
+        assert!(user_tags(list_for_task(&mut conn, task_id).await.unwrap()).is_empty());
     }
 
     #[tokio::test]
@@ -277,7 +293,7 @@ mod tests {
         add(&mut conn, task_id, "frontend").await.unwrap();
         add(&mut conn, task_id, "bug").await.unwrap();
 
-        let tags = list_for_task(&mut conn, task_id).await.unwrap();
+        let tags = user_tags(list_for_task(&mut conn, task_id).await.unwrap());
         assert_eq!(tags.len(), 2);
         assert_eq!(tags[0].name, "bug");
         assert_eq!(tags[1].name, "frontend");
@@ -291,7 +307,7 @@ mod tests {
         add(&mut conn, task_id, "bug").await.unwrap();
         add(&mut conn, task_id, "bug").await.unwrap();
 
-        let tags = list_for_task(&mut conn, task_id).await.unwrap();
+        let tags = user_tags(list_for_task(&mut conn, task_id).await.unwrap());
         assert_eq!(tags.len(), 1);
     }
 
@@ -303,7 +319,7 @@ mod tests {
         add(&mut conn, task_id, "bug").await.unwrap();
         remove(&mut conn, task_id, "bug").await.unwrap();
 
-        let tags = list_for_task(&mut conn, task_id).await.unwrap();
+        let tags = user_tags(list_for_task(&mut conn, task_id).await.unwrap());
         assert!(tags.is_empty());
     }
 
@@ -323,7 +339,7 @@ mod tests {
         add(&mut conn, task_id, "frontend").await.unwrap();
         add(&mut conn, task_id, "bug").await.unwrap();
 
-        let all = list_all(&mut conn).await.unwrap();
+        let all = user_tags(list_all(&mut conn).await.unwrap());
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].name, "bug");
         assert_eq!(all[1].name, "frontend");
@@ -350,11 +366,11 @@ mod tests {
         add(&mut conn, task_id, "shared").await.unwrap();
         add(&mut conn, task2.id, "shared").await.unwrap();
 
-        let all = list_all(&mut conn).await.unwrap();
+        let all = user_tags(list_all(&mut conn).await.unwrap());
         assert_eq!(all.len(), 1); // One tag, used by two tasks
 
-        let tags1 = list_for_task(&mut conn, task_id).await.unwrap();
-        let tags2 = list_for_task(&mut conn, task2.id).await.unwrap();
+        let tags1 = user_tags(list_for_task(&mut conn, task_id).await.unwrap());
+        let tags2 = user_tags(list_for_task(&mut conn, task2.id).await.unwrap());
         assert_eq!(tags1.len(), 1);
         assert_eq!(tags2.len(), 1);
         assert_eq!(tags1[0].name, "shared");
@@ -372,14 +388,14 @@ mod tests {
         add(&mut conn, t1_id, "urgent").await.unwrap();
         add(&mut conn, t2_id, "urgent").await.unwrap();
 
-        let alpha_tags = list_for_backlog(&mut conn, bl1_id).await.unwrap();
+        let alpha_tags = user_tags(list_for_backlog(&mut conn, bl1_id).await.unwrap());
         assert_eq!(alpha_tags.len(), 2);
         let alpha_names: Vec<&str> = alpha_tags.iter().map(|t| t.name.as_str()).collect();
         assert!(alpha_names.contains(&"frontend"));
         assert!(alpha_names.contains(&"urgent"));
         assert!(!alpha_names.contains(&"backend"));
 
-        let beta_tags = list_for_backlog(&mut conn, bl2_id).await.unwrap();
+        let beta_tags = user_tags(list_for_backlog(&mut conn, bl2_id).await.unwrap());
         assert_eq!(beta_tags.len(), 2);
         let beta_names: Vec<&str> = beta_tags.iter().map(|t| t.name.as_str()).collect();
         assert!(beta_names.contains(&"backend"));
@@ -392,7 +408,7 @@ mod tests {
         let (pool, bl1_id, _bl2_id, _t1_id, _t2_id, _dir) = setup_two_backlogs().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        let tags = list_for_backlog(&mut conn, bl1_id).await.unwrap();
+        let tags = user_tags(list_for_backlog(&mut conn, bl1_id).await.unwrap());
         assert!(tags.is_empty());
     }
 
@@ -411,7 +427,7 @@ mod tests {
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].name, "orphan");
 
-        let all = list_all(&mut conn).await.unwrap();
+        let all = user_tags(list_all(&mut conn).await.unwrap());
         assert_eq!(all.len(), 2);
         let names: Vec<&str> = all.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"used"));
@@ -431,7 +447,7 @@ mod tests {
         assert_eq!(pruned[0].name, "orphan");
 
         // Tag still exists after dry run
-        let all = list_all(&mut conn).await.unwrap();
+        let all = user_tags(list_all(&mut conn).await.unwrap());
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].name, "orphan");
     }
