@@ -1,25 +1,32 @@
 use crate::error::RangerError;
-use crate::models::Tag;
+use crate::models::{Tag, TagParts};
 use sqlx::SqliteConnection;
 
 /// Get or create a tag by name. Returns the existing tag if it already exists.
+/// `:bug` and `bug` name the same tag, which is stored as `bug`.
 pub async fn get_or_create(conn: &mut SqliteConnection, name: &str) -> Result<Tag, RangerError> {
-    if let Some(tag) = sqlx::query_as::<_, Tag>("SELECT id, name FROM tags WHERE name = ?")
-        .bind(name)
-        .fetch_optional(&mut *conn)
-        .await?
+    let parts = TagParts::try_from(name)?;
+    let name = parts.to_string();
+
+    if let Some(tag) =
+        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags WHERE name = ?")
+            .bind(&name)
+            .fetch_optional(&mut *conn)
+            .await?
     {
         return Ok(tag);
     }
 
-    sqlx::query("INSERT INTO tags (name) VALUES (?)")
-        .bind(name)
+    sqlx::query("INSERT INTO tags (name, key, value) VALUES (?, ?, ?)")
+        .bind(&name)
+        .bind(parts.key)
+        .bind(parts.value)
         .execute(&mut *conn)
         .await?;
 
     Ok(
-        sqlx::query_as::<_, Tag>("SELECT id, name FROM tags WHERE name = ?")
-            .bind(name)
+        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags WHERE name = ?")
+            .bind(&name)
             .fetch_one(&mut *conn)
             .await?,
     )
@@ -48,11 +55,14 @@ pub async fn remove(
     task_id: i64,
     name: &str,
 ) -> Result<(), RangerError> {
+    // Canonicalize so `:bug` removes `bug`. A name that doesn't parse can
+    // only match a tag from before parsing was enforced, so use it as is.
+    let name = TagParts::try_from(name).map_or_else(|_| name.to_string(), |p| p.to_string());
     sqlx::query(
         "DELETE FROM task_tags WHERE task_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
     )
     .bind(task_id)
-    .bind(name)
+    .bind(&name)
     .execute(&mut *conn)
     .await?;
 
@@ -65,7 +75,7 @@ pub async fn list_for_task(
     task_id: i64,
 ) -> Result<Vec<Tag>, RangerError> {
     Ok(sqlx::query_as::<_, Tag>(
-        "SELECT t.id, t.name FROM tags t \
+        "SELECT t.id, t.name, t.key, t.value FROM tags t \
          JOIN task_tags tt ON t.id = tt.tag_id \
          WHERE tt.task_id = ? ORDER BY t.name",
     )
@@ -77,7 +87,7 @@ pub async fn list_for_task(
 /// List all tags (globally).
 pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerError> {
     Ok(
-        sqlx::query_as::<_, Tag>("SELECT id, name FROM tags ORDER BY name")
+        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags ORDER BY name")
             .fetch_all(&mut *conn)
             .await?,
     )
@@ -87,7 +97,7 @@ pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerErr
 /// If dry_run is true, returns what would be removed without deleting.
 pub async fn prune(conn: &mut SqliteConnection, dry_run: bool) -> Result<Vec<Tag>, RangerError> {
     let orphaned = sqlx::query_as::<_, Tag>(
-        "SELECT id, name FROM tags WHERE id NOT IN (SELECT tag_id FROM task_tags) ORDER BY name",
+        "SELECT id, name, key, value FROM tags WHERE id NOT IN (SELECT tag_id FROM task_tags) ORDER BY name",
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -107,7 +117,7 @@ pub async fn list_for_backlog(
     backlog_id: i64,
 ) -> Result<Vec<Tag>, RangerError> {
     Ok(sqlx::query_as::<_, Tag>(
-        "SELECT DISTINCT t.id, t.name FROM tags t \
+        "SELECT DISTINCT t.id, t.name, t.key, t.value FROM tags t \
          JOIN task_tags tt ON t.id = tt.tag_id \
          JOIN tasks tk ON tt.task_id = tk.id \
          WHERE tk.backlog_id = ? ORDER BY t.name",
@@ -175,6 +185,70 @@ mod tests {
         .await
         .unwrap();
         (pool, bl1.id, bl2.id, t1.id, t2.id, dir)
+    }
+
+    #[tokio::test]
+    async fn add_rejects_empty_value() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        assert!(add(&mut conn, task_id, "x:").await.is_err());
+        assert!(list_all(&mut conn).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_stores_key_and_value() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let tag = add(&mut conn, task_id, "project:ranger").await.unwrap();
+        assert_eq!(tag.key, "project");
+        assert_eq!(tag.value, "ranger");
+
+        let bare = add(&mut conn, task_id, "bug").await.unwrap();
+        assert_eq!(bare.key, "");
+        assert_eq!(bare.value, "bug");
+
+        let tags = list_for_task(&mut conn, task_id).await.unwrap();
+        assert_eq!(tags[1].key, "project");
+        assert_eq!(tags[1].value, "ranger");
+    }
+
+    #[tokio::test]
+    async fn empty_key_names_the_bare_tag() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let bare = add(&mut conn, task_id, "bug").await.unwrap();
+        let colon = add(&mut conn, task_id, ":bug").await.unwrap();
+        assert_eq!(colon.id, bare.id);
+        assert_eq!(colon.name, "bug");
+        assert_eq!(list_all(&mut conn).await.unwrap().len(), 1);
+
+        remove(&mut conn, task_id, ":bug").await.unwrap();
+        assert!(list_for_task(&mut conn, task_id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_unparseable_legacy_tag() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        // Tags like `x:` can't be created anymore but may already exist.
+        sqlx::query("INSERT INTO tags (name, key, value) VALUES ('x:', 'x', '')")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO task_tags (task_id, tag_id) SELECT ?, id FROM tags WHERE name = 'x:'",
+        )
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        remove(&mut conn, task_id, "x:").await.unwrap();
+        assert!(list_for_task(&mut conn, task_id).await.unwrap().is_empty());
     }
 
     #[tokio::test]

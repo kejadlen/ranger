@@ -106,6 +106,46 @@ pub struct Task {
 pub struct Tag {
     pub id: i64,
     pub name: String,
+    /// The part of `name` before its first colon, or empty for a bare tag.
+    pub key: String,
+    /// The part of `name` after its first colon, or all of it for a bare tag.
+    pub value: String,
+}
+
+/// A tag name split into its key and value on the first colon. A bare tag
+/// such as `bug` has an empty key, so `bug` and `:bug` are the same tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TagParts<'a> {
+    pub key: &'a str,
+    pub value: &'a str,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("tag '{0}' has no value; add one after the colon, or drop the colon to make a bare tag")]
+pub struct EmptyTagValueError(String);
+
+impl<'a> TryFrom<&'a str> for TagParts<'a> {
+    type Error = EmptyTagValueError;
+
+    /// Rejects a name with nothing after its colon, such as `x:`.
+    fn try_from(name: &'a str) -> Result<Self, Self::Error> {
+        let (key, value) = name.split_once(':').unwrap_or(("", name));
+        if value.is_empty() {
+            return Err(EmptyTagValueError(name.to_string()));
+        }
+        Ok(TagParts { key, value })
+    }
+}
+
+/// The canonical name: `value` for a bare tag, `key:value` otherwise.
+impl std::fmt::Display for TagParts<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.key.is_empty() {
+            f.write_str(self.value)
+        } else {
+            write!(f, "{}:{}", self.key, self.value)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -119,6 +159,45 @@ pub struct Comment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parts<'a>(key: &'a str, value: &'a str) -> TagParts<'a> {
+        TagParts { key, value }
+    }
+
+    #[test]
+    fn tag_parts_bare_tag_has_empty_key() {
+        assert_eq!(TagParts::try_from("bug").unwrap(), parts("", "bug"));
+        assert_eq!(TagParts::try_from(":bug").unwrap(), parts("", "bug"));
+    }
+
+    #[test]
+    fn tag_parts_split_on_first_colon() {
+        assert_eq!(
+            TagParts::try_from("project:ranger").unwrap(),
+            parts("project", "ranger")
+        );
+        assert_eq!(
+            TagParts::try_from("url:http://x").unwrap(),
+            parts("url", "http://x")
+        );
+    }
+
+    #[test]
+    fn tag_parts_reject_empty_value() {
+        for name in ["x:", ":", ""] {
+            assert!(TagParts::try_from(name).is_err(), "{name:?} should fail");
+        }
+        assert_eq!(
+            TagParts::try_from("x:").unwrap_err().to_string(),
+            "tag 'x:' has no value; add one after the colon, or drop the colon to make a bare tag"
+        );
+    }
+
+    #[test]
+    fn tag_parts_display_canonical_name() {
+        assert_eq!(parts("", "bug").to_string(), "bug");
+        assert_eq!(parts("project", "ranger").to_string(), "project:ranger");
+    }
 
     #[test]
     fn state_roundtrips_through_display_and_parse() {
