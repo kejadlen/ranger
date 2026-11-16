@@ -106,6 +106,10 @@ pub struct Task {
 pub struct Tag {
     pub id: i64,
     pub name: String,
+    /// The part of `name` before its first colon, or `None` for a bare tag.
+    pub key: Option<String>,
+    /// The part of `name` after its first colon, or `None` for a bare tag.
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

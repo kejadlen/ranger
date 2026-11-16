@@ -2,23 +2,36 @@ use crate::error::RangerError;
 use crate::models::Tag;
 use sqlx::SqliteConnection;
 
+/// Split a tag name into its key and value on the first colon.
+/// Bare tags such as `bug` have neither.
+pub fn parse(name: &str) -> (Option<&str>, Option<&str>) {
+    match name.split_once(':') {
+        Some((key, value)) => (Some(key), Some(value)),
+        None => (None, None),
+    }
+}
+
 /// Get or create a tag by name. Returns the existing tag if it already exists.
 pub async fn get_or_create(conn: &mut SqliteConnection, name: &str) -> Result<Tag, RangerError> {
-    if let Some(tag) = sqlx::query_as::<_, Tag>("SELECT id, name FROM tags WHERE name = ?")
-        .bind(name)
-        .fetch_optional(&mut *conn)
-        .await?
+    if let Some(tag) =
+        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags WHERE name = ?")
+            .bind(name)
+            .fetch_optional(&mut *conn)
+            .await?
     {
         return Ok(tag);
     }
 
-    sqlx::query("INSERT INTO tags (name) VALUES (?)")
+    let (key, value) = parse(name);
+    sqlx::query("INSERT INTO tags (name, key, value) VALUES (?, ?, ?)")
         .bind(name)
+        .bind(key)
+        .bind(value)
         .execute(&mut *conn)
         .await?;
 
     Ok(
-        sqlx::query_as::<_, Tag>("SELECT id, name FROM tags WHERE name = ?")
+        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags WHERE name = ?")
             .bind(name)
             .fetch_one(&mut *conn)
             .await?,
@@ -65,7 +78,7 @@ pub async fn list_for_task(
     task_id: i64,
 ) -> Result<Vec<Tag>, RangerError> {
     Ok(sqlx::query_as::<_, Tag>(
-        "SELECT t.id, t.name FROM tags t \
+        "SELECT t.id, t.name, t.key, t.value FROM tags t \
          JOIN task_tags tt ON t.id = tt.tag_id \
          WHERE tt.task_id = ? ORDER BY t.name",
     )
@@ -77,7 +90,7 @@ pub async fn list_for_task(
 /// List all tags (globally).
 pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerError> {
     Ok(
-        sqlx::query_as::<_, Tag>("SELECT id, name FROM tags ORDER BY name")
+        sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags ORDER BY name")
             .fetch_all(&mut *conn)
             .await?,
     )
@@ -87,7 +100,7 @@ pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Tag>, RangerErr
 /// If dry_run is true, returns what would be removed without deleting.
 pub async fn prune(conn: &mut SqliteConnection, dry_run: bool) -> Result<Vec<Tag>, RangerError> {
     let orphaned = sqlx::query_as::<_, Tag>(
-        "SELECT id, name FROM tags WHERE id NOT IN (SELECT tag_id FROM task_tags) ORDER BY name",
+        "SELECT id, name, key, value FROM tags WHERE id NOT IN (SELECT tag_id FROM task_tags) ORDER BY name",
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -107,7 +120,7 @@ pub async fn list_for_backlog(
     backlog_id: i64,
 ) -> Result<Vec<Tag>, RangerError> {
     Ok(sqlx::query_as::<_, Tag>(
-        "SELECT DISTINCT t.id, t.name FROM tags t \
+        "SELECT DISTINCT t.id, t.name, t.key, t.value FROM tags t \
          JOIN task_tags tt ON t.id = tt.tag_id \
          JOIN tasks tk ON tt.task_id = tk.id \
          WHERE tk.backlog_id = ? ORDER BY t.name",
@@ -175,6 +188,37 @@ mod tests {
         .await
         .unwrap();
         (pool, bl1.id, bl2.id, t1.id, t2.id, dir)
+    }
+
+    #[test]
+    fn parse_bare_tag() {
+        assert_eq!(parse("bug"), (None, None));
+    }
+
+    #[test]
+    fn parse_splits_on_first_colon() {
+        assert_eq!(parse("project:ranger"), (Some("project"), Some("ranger")));
+        assert_eq!(parse("url:http://x"), (Some("url"), Some("http://x")));
+        assert_eq!(parse(":x"), (Some(""), Some("x")));
+        assert_eq!(parse("x:"), (Some("x"), Some("")));
+    }
+
+    #[tokio::test]
+    async fn add_stores_key_and_value() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
+
+        let tag = add(&mut conn, task_id, "project:ranger").await.unwrap();
+        assert_eq!(tag.key.as_deref(), Some("project"));
+        assert_eq!(tag.value.as_deref(), Some("ranger"));
+
+        let bare = add(&mut conn, task_id, "bug").await.unwrap();
+        assert_eq!(bare.key, None);
+        assert_eq!(bare.value, None);
+
+        let tags = list_for_task(&mut conn, task_id).await.unwrap();
+        assert_eq!(tags[1].key.as_deref(), Some("project"));
+        assert_eq!(tags[1].value.as_deref(), Some("ranger"));
     }
 
     #[tokio::test]

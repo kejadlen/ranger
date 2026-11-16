@@ -84,6 +84,31 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    /// Open a database with only the migrations older than `version` applied.
+    async fn migrate_before(path: &Path, version: i64) -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let full = sqlx::migrate!();
+        let older: Vec<_> = full
+            .iter()
+            .filter(|m| m.version < version)
+            .cloned()
+            .collect();
+        let migrator = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(older),
+            ..full
+        };
+        migrator.run(&pool).await.unwrap();
+        pool
+    }
+
     #[tokio::test]
     async fn connect_creates_db_and_runs_migrations() {
         let dir = tempdir().unwrap();
@@ -110,6 +135,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tag_key_value_migration_backfills_existing_tags() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Build the schema as it was before migration 014, with existing tags.
+        let pool = migrate_before(&db_path, 14).await;
+
+        let names = ["bug", "project:ranger", "url:http://x", ":x", "x:"];
+        for name in names {
+            sqlx::query("INSERT INTO tags (name) VALUES (?)")
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool.close().await;
+
+        // Run the remaining migrations; the backfill must agree with the
+        // parse that new tags get.
+        let pool = connect(&db_path).await.unwrap();
+        for name in names {
+            let (key, value): (Option<String>, Option<String>) =
+                sqlx::query_as("SELECT key, value FROM tags WHERE name = ?")
+                    .bind(name)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            let (want_key, want_value) = crate::ops::tag::parse(name);
+            assert_eq!(key.as_deref(), want_key, "key for {name}");
+            assert_eq!(value.as_deref(), want_value, "value for {name}");
+        }
+    }
+
+    #[tokio::test]
     async fn no_backup_for_fresh_db() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
@@ -129,20 +188,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
-        // First connect runs all migrations
-        let pool = connect(&db_path).await.unwrap();
-
-        // Simulate a "pending" migration by deleting the latest migration record
-        let latest: (i64,) =
-            sqlx::query_as("SELECT version FROM _sqlx_migrations ORDER BY version DESC LIMIT 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ?")
-            .bind(latest.0)
-            .execute(&pool)
-            .await
-            .unwrap();
+        // Apply every migration but the latest, leaving it pending
+        let latest = sqlx::migrate!().iter().map(|m| m.version).max().unwrap();
+        let pool = migrate_before(&db_path, latest).await;
         pool.close().await;
 
         // Reconnect — should detect pending migration and create backup
