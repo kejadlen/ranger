@@ -18,7 +18,7 @@ pub fn generate_key() -> String {
 /// The minimum returned value is 1 (even if the set has only one key).
 pub fn shortest_unique_prefix_len(key: &str, all_keys: &[String]) -> usize {
     let mut len = 1;
-    while len < key.len() {
+    while len <= key.len() {
         let prefix = &key[..len];
         let count = all_keys.iter().filter(|k| k.starts_with(prefix)).count();
         if count <= 1 {
@@ -26,7 +26,7 @@ pub fn shortest_unique_prefix_len(key: &str, all_keys: &[String]) -> usize {
         }
         len += 1;
     }
-    unreachable!("all keys are the same length") // cov-excl-line
+    unreachable!("keys are distinct, so the full key is unique") // cov-excl-line
 }
 
 /// Builds a map from key → shortest unique prefix length for all keys in the set.
@@ -48,6 +48,71 @@ pub fn resolve_prefix(prefix: &str, keys: &[String]) -> Result<String, RangerErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hegel::TestCase;
+    use hegel::generators as gs;
+
+    /// A small set of distinct keys. A narrow alphabet and short length make
+    /// shared prefixes common, which is where the interesting cases are.
+    fn draw_keys(tc: &TestCase) -> Vec<String> {
+        let keys = tc.draw(
+            gs::hashsets(gs::from_regex("[klm]{4}"))
+                .min_size(1)
+                .max_size(12),
+        );
+        keys.into_iter().collect()
+    }
+
+    #[hegel::test]
+    fn prop_shortest_unique_prefix_resolves_back(tc: TestCase) {
+        let keys = draw_keys(&tc);
+        let key = tc.draw(gs::sampled_from(keys.clone()));
+        let len = shortest_unique_prefix_len(&key, &keys);
+
+        assert!((1..=key.len()).contains(&len), "len {len} for {key:?}");
+        assert_eq!(resolve_prefix(&key[..len], &keys).unwrap(), key);
+        if len > 1 {
+            let shorter = &key[..len - 1];
+            assert!(
+                resolve_prefix(shorter, &keys).is_err(),
+                "{shorter:?} should be ambiguous among {keys:?}"
+            );
+        }
+    }
+
+    #[hegel::test]
+    fn prop_full_key_always_resolves(tc: TestCase) {
+        let keys = draw_keys(&tc);
+        for key in &keys {
+            assert_eq!(&resolve_prefix(key, &keys).unwrap(), key);
+        }
+    }
+
+    #[hegel::test]
+    fn prop_unique_prefix_lengths_agree(tc: TestCase) {
+        let keys = draw_keys(&tc);
+        let map = unique_prefix_lengths(&keys);
+        assert_eq!(map.len(), keys.len());
+        for key in &keys {
+            assert_eq!(map[key], shortest_unique_prefix_len(key, &keys));
+        }
+    }
+
+    #[hegel::test]
+    fn prop_resolve_prefix_matches_filter(tc: TestCase) {
+        let keys = draw_keys(&tc);
+        let prefix = tc.draw(gs::from_regex("[klm]{0,4}"));
+        let matching: Vec<&String> = keys.iter().filter(|k| k.starts_with(&prefix)).collect();
+        let expected = match matching.as_slice() {
+            [] => Err("not found"),
+            [only] => Ok((*only).clone()),
+            _ => Err("ambiguous"),
+        };
+        let actual = resolve_prefix(&prefix, &keys).map_err(|e| match e {
+            RangerError::KeyNotFound(_) => "not found",
+            _ => "ambiguous",
+        });
+        assert_eq!(actual, expected, "{prefix:?} among {keys:?}");
+    }
 
     #[test]
     fn generated_key_has_correct_length() {
@@ -98,6 +163,13 @@ mod tests {
         assert_eq!(shortest_unique_prefix_len("romoqtuw", &keys), 4);
         assert_eq!(shortest_unique_prefix_len("romxnklp", &keys), 4);
         assert_eq!(shortest_unique_prefix_len("rypqxnkl", &keys), 2);
+    }
+
+    #[test]
+    fn shortest_unique_prefix_diverges_at_last_char() {
+        let keys = vec!["kkkk".to_string(), "kkkl".to_string()];
+        assert_eq!(shortest_unique_prefix_len("kkkk", &keys), 4);
+        assert_eq!(shortest_unique_prefix_len("kkkl", &keys), 4);
     }
 
     #[test]

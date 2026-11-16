@@ -137,10 +137,12 @@ impl<'a> TryFrom<&'a str> for TagParts<'a> {
     }
 }
 
-/// The canonical name: `value` for a bare tag, `key:value` otherwise.
+/// The canonical name: `value` for a bare tag, `key:value` otherwise. A bare
+/// tag whose value has a colon keeps its leading colon (`:a:b`), since `a:b`
+/// would parse back as key `a`.
 impl std::fmt::Display for TagParts<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.key.is_empty() {
+        if self.key.is_empty() && !self.value.contains(':') {
             f.write_str(self.value)
         } else {
             write!(f, "{}:{}", self.key, self.value)
@@ -159,6 +161,63 @@ pub struct Comment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hegel::TestCase;
+    use hegel::generators as gs;
+
+    const STATES: [State; 4] = [State::Icebox, State::Ready, State::InProgress, State::Done];
+
+    #[hegel::test]
+    fn prop_tag_parts_split_and_rejoin(tc: TestCase) {
+        let name = tc.draw(gs::text().max_size(20));
+        match TagParts::try_from(name.as_str()) {
+            Ok(parts) => {
+                assert!(!parts.value.is_empty());
+                assert!(!parts.key.contains(':'));
+                // Display is canonical: it reparses to the same parts, and
+                // differs from the input only by a dropped leading colon.
+                let canonical = parts.to_string();
+                assert_eq!(TagParts::try_from(canonical.as_str()).unwrap(), parts);
+                assert!(canonical == name || format!(":{canonical}") == name);
+            }
+            Err(_) => assert!(
+                name.split_once(':')
+                    .map_or(name.as_str(), |(_, v)| v)
+                    .is_empty()
+            ),
+        }
+    }
+
+    #[hegel::test]
+    fn prop_tag_parts_roundtrip_from_parts(tc: TestCase) {
+        let key = tc.draw(gs::text().max_size(10).exclude_characters(":"));
+        let value = tc.draw(gs::text().min_size(1).max_size(10));
+        let parts = TagParts {
+            key: &key,
+            value: &value,
+        };
+        let name = parts.to_string();
+        assert_eq!(TagParts::try_from(name.as_str()).unwrap(), parts);
+    }
+
+    #[hegel::test]
+    fn prop_state_roundtrips(tc: TestCase) {
+        let state = tc.draw(gs::sampled_from(STATES.to_vec()));
+        assert_eq!(state.to_string().parse::<State>().unwrap(), state);
+    }
+
+    #[hegel::test]
+    fn prop_state_parse_accepts_only_known_names(tc: TestCase) {
+        let s = tc.draw(gs::text().max_size(12));
+        let known = STATES.iter().any(|state| state.as_str() == s);
+        assert_eq!(s.parse::<State>().is_ok(), known, "{s:?}");
+    }
+
+    #[hegel::test]
+    fn prop_state_rank_is_injective(tc: TestCase) {
+        let a = tc.draw(gs::sampled_from(STATES.to_vec()));
+        let b = tc.draw(gs::sampled_from(STATES.to_vec()));
+        assert_eq!(a.rank() == b.rank(), a == b);
+    }
 
     fn parts<'a>(key: &'a str, value: &'a str) -> TagParts<'a> {
         TagParts { key, value }
@@ -197,6 +256,7 @@ mod tests {
     fn tag_parts_display_canonical_name() {
         assert_eq!(parts("", "bug").to_string(), "bug");
         assert_eq!(parts("project", "ranger").to_string(), "project:ranger");
+        assert_eq!(parts("", "a:b").to_string(), ":a:b");
     }
 
     #[test]
