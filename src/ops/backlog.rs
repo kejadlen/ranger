@@ -1,14 +1,23 @@
 use crate::error::RangerError;
-use crate::models::Backlog;
+use crate::models::{Backlog, TagParts};
 use sqlx::sqlite::SqliteConnection;
 
+/// The `project:` tag that mirrors a backlog. Every task in the backlog
+/// carries it.
+pub fn project_tag(name: &str) -> String {
+    format!("project:{name}")
+}
+
+/// Create a backlog. Its name must work as the value of its `project:` tag.
 pub async fn create(conn: &mut SqliteConnection, name: &str) -> Result<Backlog, RangerError> {
+    TagParts::try_from(project_tag(name).as_str())?;
     let backlog = sqlx::query_as::<_, Backlog>(
         "INSERT INTO backlogs (name) VALUES (?) RETURNING id, name, created_at, updated_at",
     )
     .bind(name)
     .fetch_one(&mut *conn)
     .await?;
+    crate::ops::tag::get_or_create(conn, &project_tag(name)).await?;
     Ok(backlog)
 }
 
@@ -32,6 +41,8 @@ pub async fn get_by_name(conn: &mut SqliteConnection, name: &str) -> Result<Back
     Ok(backlog)
 }
 
+/// Delete a backlog and its tasks. Its `project:` tag stays, since tasks in
+/// other backlogs may carry it; `tag prune` removes it once it's unused.
 pub async fn delete(conn: &mut SqliteConnection, name: &str) -> Result<Backlog, RangerError> {
     let backlog = get_by_name(&mut *conn, name).await?;
     sqlx::query("DELETE FROM backlogs WHERE id = ?")
@@ -57,11 +68,29 @@ mod tests {
     async fn create_and_get_backlog() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let backlog = create(&mut conn, "My Backlog").await.unwrap();
-        assert_eq!(backlog.name, "My Backlog");
+        let backlog = create(&mut conn, "my-backlog").await.unwrap();
+        assert_eq!(backlog.name, "my-backlog");
 
-        let fetched = get_by_name(&mut conn, "My Backlog").await.unwrap();
+        let fetched = get_by_name(&mut conn, "my-backlog").await.unwrap();
         assert_eq!(fetched.id, backlog.id);
+    }
+
+    #[tokio::test]
+    async fn create_rejects_names_that_cant_be_a_project_tag() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        for name in ["My Backlog", ""] {
+            let err = create(&mut conn, name).await.unwrap_err();
+            assert!(matches!(err, RangerError::InvalidTag(_)), "{name:?}");
+        }
+        assert_eq!(
+            create(&mut conn, "My Backlog")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "tag 'project:My Backlog' can't contain whitespace, which separates filter terms"
+        );
+        assert!(list(&mut conn).await.unwrap().is_empty());
     }
 
     #[tokio::test]

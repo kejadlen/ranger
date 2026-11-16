@@ -55,6 +55,17 @@ pub async fn create(
         .fetch_one(&mut *conn)
         .await?;
 
+    let backlog_name: String = sqlx::query_scalar("SELECT name FROM backlogs WHERE id = ?")
+        .bind(params.backlog_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    crate::ops::tag::add(
+        conn,
+        task.id,
+        &crate::ops::backlog::project_tag(&backlog_name),
+    )
+    .await?;
+
     Ok(task)
 }
 
@@ -1708,6 +1719,52 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, RangerError::InvalidTag(_)));
+    }
+
+    /// However tasks are spread across backlogs, each one carries the
+    /// `project:` tag of its own backlog.
+    #[hegel::test]
+    fn prop_tasks_carry_their_backlog_tag(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+
+        let names = ["ranger", "dotfiles", "Ranger"];
+        let placements =
+            tc.draw(gs::vecs(gs::integers::<usize>().max_value(names.len() - 1)).max_size(6));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = tempdir().unwrap();
+            let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
+            let mut conn = pool.acquire().await.unwrap();
+            let mut backlogs = Vec::new();
+            for name in names {
+                backlogs.push(backlog::create(&mut conn, name).await.unwrap());
+            }
+            for (i, &b) in placements.iter().enumerate() {
+                let task = create(
+                    &mut conn,
+                    CreateTask {
+                        title: &format!("t{i}"),
+                        backlog_id: backlogs[b].id,
+                        state: None,
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+                let projects: Vec<String> = crate::ops::tag::list_for_task(&mut conn, task.id)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .filter(|t| t.key == "project")
+                    .map(|t| t.value)
+                    .collect();
+                assert_eq!(projects, [names[b]]);
+            }
+        });
     }
 
     /// `list` agrees with evaluating the filter directly against each task's
