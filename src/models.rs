@@ -134,13 +134,16 @@ pub enum InvalidTagError {
     DashKey(String),
     #[error("tag '{0}' can't use the key 'state', which filters reserve for task state")]
     StateKey(String),
+    #[error("tag '{0}' can't contain '|', which separates alternatives in filters")]
+    Pipe(String),
 }
 
 impl<'a> TryFrom<&'a str> for TagParts<'a> {
     type Error = InvalidTagError;
 
     /// Rejects a name with nothing after its colon (`x:`), with whitespace,
-    /// with a key starting with `-` (`-a:b`), or with the key `state`.
+    /// with a key starting with `-` (`-a:b`), with the key `state`, or with
+    /// a `|`.
     fn try_from(name: &'a str) -> Result<Self, Self::Error> {
         let (key, value) = name.split_once(':').unwrap_or(("", name));
         let parts = TagParts { key, value };
@@ -152,6 +155,8 @@ impl<'a> TryFrom<&'a str> for TagParts<'a> {
             InvalidTagError::DashKey
         } else if parts.key == "state" {
             InvalidTagError::StateKey
+        } else if name.contains('|') {
+            InvalidTagError::Pipe
         } else {
             return Ok(parts);
         };
@@ -216,6 +221,7 @@ mod tests {
                     name.chars().any(char::is_whitespace),
                     key.starts_with('-'),
                     key == "state",
+                    name.contains('|'),
                 ];
                 assert!(reasons.contains(&true), "{name:?} rejected for no reason");
             }
@@ -228,13 +234,13 @@ mod tests {
     fn prop_valid_tags_are_writable_as_terms(tc: TestCase) {
         use crate::filter::{Matcher, Term};
 
-        let name = tc.draw(gs::text().alphabet("ab-:é_ s").max_size(8));
+        let name = tc.draw(gs::text().alphabet("ab-:é_ s|").max_size(8));
         let Ok(parts) = TagParts::try_from(name.as_str()) else {
             return;
         };
         let matcher = Matcher::Tag {
             key: parts.key.to_string(),
-            value: parts.value.to_string(),
+            values: vec![parts.value.to_string()],
         };
         for negated in [false, true] {
             let term = Term {
@@ -256,6 +262,7 @@ mod tests {
         let value = tc.draw(gs::text().min_size(1).max_size(10));
         tc.assume(!format!("{key}{value}").chars().any(char::is_whitespace));
         tc.assume(!key.starts_with('-') && key != "state");
+        tc.assume(!key.contains('|') && !value.contains('|'));
         let parts = TagParts {
             key: &key,
             value: &value,
@@ -295,6 +302,8 @@ mod tests {
             ("x:\ty", InvalidTagError::Whitespace("x:\ty".into())),
             ("-a:b", InvalidTagError::DashKey("-a:b".into())),
             ("state:x", InvalidTagError::StateKey("state:x".into())),
+            ("a|b", InvalidTagError::Pipe("a|b".into())),
+            ("k:a|b", InvalidTagError::Pipe("k:a|b".into())),
         ] {
             assert_eq!(TagParts::try_from(name).unwrap_err(), err, "{name:?}");
         }

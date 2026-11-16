@@ -3,7 +3,9 @@
 //!
 //! - A bare term (`bug`) or a `key:value` term matches tasks with that tag.
 //! - `state:<state>` matches the task's state rather than a tag.
-//! - A leading `-` negates a term.
+//! - `|` separates alternative values for the same key, as in
+//!   `project:ranger|dotfiles`, `bug|chore` or `state:ready|in_progress`.
+//! - A leading `-` negates a term, alternatives included.
 
 use std::fmt;
 use std::str::FromStr;
@@ -13,11 +15,11 @@ use crate::models::{InvalidStateError, InvalidTagError, State, TagParts};
 /// What a single term matches, before negation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Matcher {
-    /// Tasks carrying the tag with this key and value. The key is empty for
-    /// a bare tag.
-    Tag { key: String, value: String },
-    /// Tasks in this state.
-    State(State),
+    /// Tasks carrying a tag with this key and any of these values. The key
+    /// is empty for a bare tag. There is always at least one value.
+    Tag { key: String, values: Vec<String> },
+    /// Tasks in any of these states. There is always at least one.
+    State(Vec<State>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,13 +33,14 @@ pub struct Term {
 pub struct Filter(pub Vec<Term>);
 
 impl Filter {
-    /// The positive tag terms. A task created under this filter gets these
-    /// tags, so it shows up in the listing it was created from.
+    /// The first value of each positive tag term. A task created under this
+    /// filter gets these tags, so it shows up in the listing it was created
+    /// from.
     pub fn tags(&self) -> impl Iterator<Item = TagParts<'_>> {
         self.0.iter().filter_map(|term| match &term.matcher {
-            Matcher::Tag { key, value } if !term.negated => Some(TagParts {
+            Matcher::Tag { key, values } if !term.negated => Some(TagParts {
                 key: key.as_str(),
-                value: value.as_str(),
+                value: values[0].as_str(),
             }),
             _ => None,
         })
@@ -50,11 +53,12 @@ impl Filter {
             .any(|term| matches!(term.matcher, Matcher::State(_)))
     }
 
-    /// The first positive state term, which a task created under this filter
-    /// starts in unless a state is given explicitly.
+    /// The first value of the first positive state term, which a task
+    /// created under this filter starts in unless a state is given
+    /// explicitly.
     pub fn state(&self) -> Option<&State> {
         self.0.iter().find_map(|term| match &term.matcher {
-            Matcher::State(state) if !term.negated => Some(state),
+            Matcher::State(states) if !term.negated => states.first(),
             _ => None,
         })
     }
@@ -80,12 +84,26 @@ impl FromStr for Term {
             None => (false, s),
         };
         let matcher = match body.strip_prefix("state:") {
-            Some(state) => Matcher::State(state.parse()?),
+            Some(states) => Matcher::State(
+                states
+                    .split('|')
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()?,
+            ),
             None => {
-                let parts = TagParts::try_from(body)?;
+                let (key, alternatives) = body.split_once(':').unwrap_or(("", body));
+                let values = alternatives
+                    .split('|')
+                    .map(|value| {
+                        // Validate each alternative as the tag it names.
+                        let name = format!("{key}:{value}");
+                        TagParts::try_from(name.as_str())?;
+                        Ok(value.to_string())
+                    })
+                    .collect::<Result<_, InvalidTagError>>()?;
                 Matcher::Tag {
-                    key: parts.key.to_string(),
-                    value: parts.value.to_string(),
+                    key: key.to_string(),
+                    values,
                 }
             }
         };
@@ -111,21 +129,23 @@ impl fmt::Display for Term {
             f.write_str("-")?;
         }
         match &self.matcher {
-            Matcher::Tag { key, value } => {
-                let name = TagParts {
-                    key: key.as_str(),
-                    value: value.as_str(),
+            Matcher::Tag { key, values } => {
+                // A bare tag can usually leave its empty key out, but not if
+                // a value has a colon (it would split there), or if a
+                // positive term would start with `-` and read as a negation.
+                // A negated term already strips exactly one `-`.
+                let spell_key = !key.is_empty()
+                    || values.iter().any(|v| v.contains(':'))
+                    || (!self.negated && values[0].starts_with('-'));
+                if spell_key {
+                    write!(f, "{key}:")?;
                 }
-                .to_string();
-                // A positive term starting with `-` would read as a negation.
-                // For a bare tag, spelling out the empty key avoids that. A
-                // negated term already strips exactly one `-`, so it's fine.
-                if !self.negated && key.is_empty() && name.starts_with('-') {
-                    f.write_str(":")?;
-                }
-                f.write_str(&name)
+                f.write_str(&values.join("|"))
             }
-            Matcher::State(state) => write!(f, "state:{}", state.as_str()),
+            Matcher::State(states) => {
+                let names: Vec<&str> = states.iter().map(State::as_str).collect();
+                write!(f, "state:{}", names.join("|"))
+            }
         }
     }
 }
@@ -164,7 +184,7 @@ mod tests {
     /// Filter-ish input built from fragments of the term syntax.
     fn filter_input(tc: &TestCase) -> String {
         let fragments = [
-            "-", ":", "a", "bé", " ", "  ", "state:", "ready", "done", "x:", "-state:",
+            "-", ":", "a", "bé", " ", "  ", "|", "state:", "ready", "done", "x:", "-state:",
         ];
         let pieces = tc.draw(gs::vecs(gs::sampled_from(fragments.to_vec())).max_size(12));
         pieces.concat()
@@ -191,14 +211,20 @@ mod tests {
         for _ in 0..count {
             let negated = tc.draw(gs::booleans());
             let matcher = if tc.draw(gs::booleans()) {
-                Matcher::State(tc.draw(gs::sampled_from(STATES.to_vec())))
+                Matcher::State(
+                    tc.draw(
+                        gs::vecs(gs::sampled_from(STATES.to_vec()))
+                            .min_size(1)
+                            .max_size(3),
+                    ),
+                )
             } else {
                 let key = tc.draw(key());
                 // Tags can't have these keys; see `TagParts::try_from`.
                 tc.assume(key != "state" && !key.starts_with('-'));
                 Matcher::Tag {
                     key,
-                    value: tc.draw(value()),
+                    values: tc.draw(gs::vecs(value()).min_size(1).max_size(3)),
                 }
             };
             terms.push(Term { negated, matcher });
@@ -209,10 +235,18 @@ mod tests {
     }
 
     fn tag(key: &str, value: &str) -> Matcher {
+        tags(key, &[value])
+    }
+
+    fn tags(key: &str, values: &[&str]) -> Matcher {
         Matcher::Tag {
             key: key.to_string(),
-            value: value.to_string(),
+            values: values.iter().map(|v| v.to_string()).collect(),
         }
+    }
+
+    fn states(states: &[State]) -> Matcher {
+        Matcher::State(states.to_vec())
     }
 
     fn term(negated: bool, matcher: Matcher) -> Term {
@@ -230,10 +264,33 @@ mod tests {
                 term(false, tag("project", "ranger")),
                 term(false, tag("", "bug")),
                 term(true, tag("", "someday")),
-                term(false, Matcher::State(State::Ready)),
-                term(true, Matcher::State(State::Done)),
+                term(false, states(&[State::Ready])),
+                term(true, states(&[State::Done])),
             ]
         );
+    }
+
+    #[test]
+    fn parses_alternatives() {
+        let filter: Filter = "project:ranger|dotfiles -bug|chore state:ready|in_progress :a:b|c"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            filter.0,
+            vec![
+                term(false, tags("project", &["ranger", "dotfiles"])),
+                term(true, tags("", &["bug", "chore"])),
+                term(false, states(&[State::Ready, State::InProgress])),
+                term(false, tags("", &["a:b", "c"])),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_alternatives() {
+        for input in ["a||b", "x|", "project:|a", "state:ready|", "state:|done"] {
+            assert!(input.parse::<Term>().is_err(), "{input:?} should fail");
+        }
     }
 
     #[test]
@@ -268,9 +325,10 @@ mod tests {
 
     #[test]
     fn tags_and_state_for_new_tasks() {
-        let filter: Filter = "project:ranger -someday bug -state:done state:ready state:icebox"
-            .parse()
-            .unwrap();
+        let filter: Filter =
+            "project:ranger|dotfiles -someday bug -state:done state:ready|done state:icebox"
+                .parse()
+                .unwrap();
         let tags: Vec<String> = filter.tags().map(|t| t.to_string()).collect();
         assert_eq!(tags, ["project:ranger", "bug"]);
         assert_eq!(filter.state(), Some(&State::Ready));
@@ -287,6 +345,21 @@ mod tests {
         let s = "project:ranger bug -someday state:in_progress -state:done";
         let filter: Filter = s.parse().unwrap();
         assert_eq!(filter.to_string(), s);
+        let s = "project:ranger|dotfiles -bug|chore state:ready|done";
+        assert_eq!(s.parse::<Filter>().unwrap().to_string(), s);
+        // A colon in any alternative of a bare tag keeps the empty key.
+        assert_eq!(
+            ":bug|a:b".parse::<Term>().unwrap(),
+            term(false, tags("", &["bug", "a:b"]))
+        );
+        assert_eq!(":bug|a:b".parse::<Term>().unwrap().to_string(), ":bug|a:b");
+        // Without it, the first colon would make `bug|a` a key.
+        assert!(matches!(
+            "bug|a:b".parse::<Term>(),
+            Err(FilterError::InvalidTag(InvalidTagError::Pipe(_)))
+        ));
+        assert_eq!(":-x|y".parse::<Term>().unwrap().to_string(), ":-x|y");
+        assert_eq!("--x|y".parse::<Term>().unwrap().to_string(), "--x|y");
         assert_eq!(":bug".parse::<Term>().unwrap().to_string(), "bug");
         assert_eq!(":-x".parse::<Term>().unwrap().to_string(), ":-x");
         assert_eq!("-:-x".parse::<Term>().unwrap().to_string(), "--x");

@@ -585,7 +585,7 @@ fn full_workflow() {
         .args([
             "task",
             "--filter",
-            "project:ranger -bug state:ready",
+            "project:ranger|dotfiles -bug state:ready|done",
             "create",
             "Filtered task",
             "--json",
@@ -634,6 +634,14 @@ fn full_workflow() {
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(stderr.contains("--state can't be combined"), "{stderr}");
     }
+
+    // Alternatives match any of their values
+    let output = ranger(db_path)
+        .args(["task", "list", "--filter", "nope|frontend"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("First task"), "{stdout}");
 
     // An invalid term is an error
     let output = ranger(db_path)

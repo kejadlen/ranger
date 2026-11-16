@@ -80,7 +80,7 @@ impl ListFilter {
         if let Some(state) = &self.state {
             terms.push(Term {
                 negated: false,
-                matcher: Matcher::State(state.clone()),
+                matcher: Matcher::State(vec![state.clone()]),
             });
         }
         if let Some(tag) = &self.tag {
@@ -89,7 +89,7 @@ impl ListFilter {
                 negated: false,
                 matcher: Matcher::Tag {
                     key: parts.key.to_string(),
-                    value: parts.value.to_string(),
+                    values: vec![parts.value.to_string()],
                 },
             });
         }
@@ -99,18 +99,27 @@ impl ListFilter {
 
 /// A SQL condition on `tasks` for one term, with the values it binds.
 fn term_clause(term: &Term) -> (String, Vec<&str>) {
+    let placeholders = |n: usize| vec!["?"; n].join(", ");
     let (clause, binds) = match &term.matcher {
-        Matcher::Tag { key, value } => (
-            "EXISTS (SELECT 1 FROM task_tags tt JOIN tags tg ON tg.id = tt.tag_id \
-             WHERE tt.task_id = tasks.id AND tg.key = ? AND tg.value = ?)",
-            vec![key.as_str(), value.as_str()],
+        Matcher::Tag { key, values } => (
+            format!(
+                "EXISTS (SELECT 1 FROM task_tags tt JOIN tags tg ON tg.id = tt.tag_id \
+                 WHERE tt.task_id = tasks.id AND tg.key = ? AND tg.value IN ({}))",
+                placeholders(values.len())
+            ),
+            std::iter::once(key.as_str())
+                .chain(values.iter().map(String::as_str))
+                .collect(),
         ),
-        Matcher::State(state) => ("tasks.state = ?", vec![state.as_str()]),
+        Matcher::State(states) => (
+            format!("tasks.state IN ({})", placeholders(states.len())),
+            states.iter().map(State::as_str).collect(),
+        ),
     };
     let clause = if term.negated {
         format!("NOT ({clause})")
     } else {
-        clause.to_string()
+        clause
     };
     (clause, binds)
 }
@@ -136,7 +145,7 @@ pub async fn list(
 
     let is_done_only = terms
         .iter()
-        .any(|t| !t.negated && t.matcher == Matcher::State(State::Done));
+        .any(|t| !t.negated && t.matcher == Matcher::State(vec![State::Done]));
     query.push_str(if is_done_only {
         " ORDER BY done_at"
     } else {
@@ -1736,13 +1745,28 @@ mod tests {
             .map(|_| {
                 let negated = tc.draw(gs::booleans());
                 let matcher = if tc.draw(gs::booleans()) {
-                    Matcher::State(tc.draw(gs::sampled_from(STATES.to_vec())))
+                    Matcher::State(
+                        tc.draw(
+                            gs::vecs(gs::sampled_from(STATES.to_vec()))
+                                .min_size(1)
+                                .max_size(2),
+                        ),
+                    )
                 } else {
-                    let parts =
+                    // Alternatives share a key, so draw one tag for the key
+                    // and add more values from tags with the same key.
+                    let first =
                         TagParts::try_from(tc.draw(gs::sampled_from(TAGS.to_vec()))).unwrap();
+                    let mut values = vec![first.value.to_string()];
+                    for tag in tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(2)) {
+                        let parts = TagParts::try_from(tag).unwrap();
+                        if parts.key == first.key {
+                            values.push(parts.value.to_string());
+                        }
+                    }
                     Matcher::Tag {
-                        key: parts.key.to_string(),
-                        value: parts.value.to_string(),
+                        key: first.key.to_string(),
+                        values,
                     }
                 };
                 Term { negated, matcher }
@@ -1753,10 +1777,10 @@ mod tests {
 
         let matches = |state: &State, tags: &[&str], term: &Term| {
             let hit = match &term.matcher {
-                Matcher::State(s) => s == state,
-                Matcher::Tag { key, value } => tags.iter().any(|t| {
+                Matcher::State(states) => states.contains(state),
+                Matcher::Tag { key, values } => tags.iter().any(|t| {
                     let parts = TagParts::try_from(*t).unwrap();
-                    parts.key == key && parts.value == value
+                    parts.key == key && values.iter().any(|v| v == parts.value)
                 }),
             };
             hit != term.negated
