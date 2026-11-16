@@ -74,9 +74,14 @@ pub async fn list(
     } else {
         " AND archived = 0"
     };
-    let tag_join = if filter.tag.is_some() {
+    let tag = filter
+        .tag
+        .as_deref()
+        .map(crate::models::TagParts::try_from)
+        .transpose()?;
+    let tag_join = if tag.is_some() {
         " JOIN task_tags tt ON tasks.id = tt.task_id \
-         JOIN tags tg ON tt.tag_id = tg.id AND tg.name = ?"
+         JOIN tags tg ON tt.tag_id = tg.id AND tg.key = ? AND tg.value = ?"
     } else {
         ""
     };
@@ -94,8 +99,8 @@ pub async fn list(
              WHERE backlog_id = ? AND state = ?{archived_clause}{order_clause}"
         );
         let mut q = sqlx::query_as::<_, Task>(&query);
-        if let Some(tag) = &filter.tag {
-            q = q.bind(tag);
+        if let Some(tag) = &tag {
+            q = q.bind(tag.key).bind(tag.value);
         }
         q.bind(backlog_id)
             .bind(state.as_str())
@@ -107,8 +112,8 @@ pub async fn list(
              WHERE backlog_id = ?{archived_clause}{order_clause}"
         );
         let mut q = sqlx::query_as::<_, Task>(&query);
-        if let Some(tag) = &filter.tag {
-            q = q.bind(tag);
+        if let Some(tag) = &tag {
+            q = q.bind(tag.key).bind(tag.value);
         }
         q.bind(backlog_id).fetch_all(&mut *conn).await?
     };

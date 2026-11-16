@@ -73,7 +73,7 @@ When installing system packages (`apt-get`), adding Rust components (`rustup com
 - Migration uses `CREATE TABLE IF NOT EXISTS` so it's idempotent (safe to run on every connect).
 - **Never modify existing migrations.** They have already been run against real databases. Schema changes go in new migration files only.
 - **Migrations must not lose data.** When recreating a table, always `INSERT INTO ... SELECT` all rows from the original, including data in join tables (e.g. `task_tags`). Test migrations against a database with real data, not just empty schemas.
-- SQLite doesn't support `ALTER TABLE DROP COLUMN` with foreign keys cleanly. When recreating a table, wrap in `PRAGMA foreign_keys = OFF/ON` to prevent `ON DELETE CASCADE` from wiping join tables (e.g. `task_tags`).
+- SQLite doesn't support `ALTER TABLE DROP COLUMN` with foreign keys cleanly, so schema changes recreate the table. **`PRAGMA foreign_keys = OFF` does not protect child tables in a migration:** sqlx runs each migration in a transaction, where the pragma is a no-op, so `DROP TABLE` on a parent cascades and empties tables like `task_tags` and `comments`. Migration 013 (and probably 008 and 010) lost every tag link and comment this way. Copy child rows into a temporary table before the drop and restore them after, as migrations 003 and 015 do, and test the migration with rows in the child tables.
 
 ## CI and Releases
 
