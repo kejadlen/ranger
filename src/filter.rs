@@ -112,11 +112,18 @@ impl fmt::Display for Term {
         }
         match &self.matcher {
             Matcher::Tag { key, value } => {
-                let parts = TagParts {
+                let name = TagParts {
                     key: key.as_str(),
                     value: value.as_str(),
-                };
-                write!(f, "{parts}")
+                }
+                .to_string();
+                // A positive term starting with `-` would read as a negation.
+                // For a bare tag, spelling out the empty key avoids that. A
+                // negated term already strips exactly one `-`, so it's fine.
+                if !self.negated && key.is_empty() && name.starts_with('-') {
+                    f.write_str(":")?;
+                }
+                f.write_str(&name)
             }
             Matcher::State(state) => write!(f, "state:{}", state.as_str()),
         }
@@ -138,6 +145,70 @@ impl fmt::Display for Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hegel::TestCase;
+    use hegel::generators as gs;
+
+    const STATES: [State; 4] = [State::Icebox, State::Ready, State::InProgress, State::Done];
+
+    /// Text with no whitespace, which would split a term in two, biased
+    /// toward the characters the term syntax gives meaning to. Keys can't
+    /// contain a colon, since a tag splits on its first one.
+    fn key() -> gs::TextGenerator {
+        gs::text().alphabet("ab-é_").max_size(6)
+    }
+
+    fn value() -> gs::TextGenerator {
+        gs::text().alphabet("ab-:é_").min_size(1).max_size(6)
+    }
+
+    /// Filter-ish input built from fragments of the term syntax.
+    fn filter_input(tc: &TestCase) -> String {
+        let fragments = [
+            "-", ":", "a", "bé", " ", "  ", "state:", "ready", "done", "x:", "-state:",
+        ];
+        let pieces = tc.draw(gs::vecs(gs::sampled_from(fragments.to_vec())).max_size(12));
+        pieces.concat()
+    }
+
+    #[hegel::test]
+    fn prop_parsed_filter_display_reparses(tc: TestCase) {
+        let input = filter_input(&tc);
+        if let Ok(filter) = input.parse::<Filter>() {
+            let canonical = filter.to_string();
+            assert_eq!(
+                canonical.parse::<Filter>().unwrap(),
+                filter,
+                "{canonical:?}"
+            );
+            assert_eq!(filter.0.len(), input.split_whitespace().count());
+        }
+    }
+
+    #[hegel::test]
+    fn prop_terms_roundtrip_through_display(tc: TestCase) {
+        let count = tc.draw(gs::integers::<usize>().max_value(4));
+        let mut terms = Vec::new();
+        for _ in 0..count {
+            let negated = tc.draw(gs::booleans());
+            let matcher = if tc.draw(gs::booleans()) {
+                Matcher::State(tc.draw(gs::sampled_from(STATES.to_vec())))
+            } else {
+                let key = tc.draw(key());
+                // Not every tag can be written as a term: a `state` key reads
+                // as a state term, and a positive term with a key starting
+                // with `-` reads as a negation.
+                tc.assume(key != "state" && (negated || !key.starts_with('-')));
+                Matcher::Tag {
+                    key,
+                    value: tc.draw(value()),
+                }
+            };
+            terms.push(Term { negated, matcher });
+        }
+        let filter = Filter(terms);
+        let shown = filter.to_string();
+        assert_eq!(shown.parse::<Filter>().unwrap(), filter, "{shown:?}");
+    }
 
     fn tag(key: &str, value: &str) -> Matcher {
         Matcher::Tag {
@@ -219,5 +290,11 @@ mod tests {
         let filter: Filter = s.parse().unwrap();
         assert_eq!(filter.to_string(), s);
         assert_eq!(":bug".parse::<Term>().unwrap().to_string(), "bug");
+        assert_eq!(":-x".parse::<Term>().unwrap().to_string(), ":-x");
+        assert_eq!("-:-x".parse::<Term>().unwrap().to_string(), "--x");
+        assert_eq!("::-:".parse::<Term>().unwrap().to_string(), "::-:");
+        assert_eq!(":-:".parse::<Term>().unwrap().to_string(), ":-:");
+        assert_eq!("--x".parse::<Term>().unwrap().to_string(), "--x");
+        assert_eq!("--a:b".parse::<Term>().unwrap().to_string(), "--a:b");
     }
 }

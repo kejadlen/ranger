@@ -1710,6 +1710,109 @@ mod tests {
         assert!(matches!(err, RangerError::EmptyTagValue(_)));
     }
 
+    /// `list` agrees with evaluating the filter directly against each task's
+    /// state and tags.
+    #[hegel::test]
+    fn prop_list_matches_reference_model(tc: hegel::TestCase) {
+        use crate::filter::{Filter, Matcher, Term};
+        use hegel::generators as gs;
+
+        const STATES: [State; 4] = [State::Icebox, State::Ready, State::InProgress, State::Done];
+        // Includes a bare tag whose value has a colon and one starting with
+        // `-`, which the term syntax has to spell carefully.
+        const TAGS: [&str; 5] = ["bug", "project:ranger", "project:dotfiles", ":a:b", "-x"];
+
+        let task_count = tc.draw(gs::integers::<usize>().max_value(6));
+        let tasks: Vec<(State, Vec<&str>)> = (0..task_count)
+            .map(|_| {
+                let state = tc.draw(gs::sampled_from(STATES.to_vec()));
+                let tags = tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(3));
+                (state, tags)
+            })
+            .collect();
+
+        let term_count = tc.draw(gs::integers::<usize>().max_value(3));
+        let terms: Vec<Term> = (0..term_count)
+            .map(|_| {
+                let negated = tc.draw(gs::booleans());
+                let matcher = if tc.draw(gs::booleans()) {
+                    Matcher::State(tc.draw(gs::sampled_from(STATES.to_vec())))
+                } else {
+                    let parts =
+                        TagParts::try_from(tc.draw(gs::sampled_from(TAGS.to_vec()))).unwrap();
+                    Matcher::Tag {
+                        key: parts.key.to_string(),
+                        value: parts.value.to_string(),
+                    }
+                };
+                Term { negated, matcher }
+            })
+            .collect();
+        // Go through the text syntax, as the CLI does.
+        let filter: Filter = Filter(terms).to_string().parse().unwrap();
+
+        let matches = |state: &State, tags: &[&str], term: &Term| {
+            let hit = match &term.matcher {
+                Matcher::State(s) => s == state,
+                Matcher::Tag { key, value } => tags.iter().any(|t| {
+                    let parts = TagParts::try_from(*t).unwrap();
+                    parts.key == key && parts.value == value
+                }),
+            };
+            hit != term.negated
+        };
+        let mut expected: Vec<String> = tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, (state, tags))| filter.0.iter().all(|t| matches(state, tags, t)))
+            .map(|(i, _)| format!("t{i}"))
+            .collect();
+        expected.sort();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut actual: Vec<String> = rt.block_on(async {
+            let dir = tempdir().unwrap();
+            let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
+            let mut conn = pool.acquire().await.unwrap();
+            let bl = backlog::create(&mut conn, "Test").await.unwrap();
+            for (i, (state, tags)) in tasks.iter().enumerate() {
+                let task = create(
+                    &mut conn,
+                    CreateTask {
+                        title: &format!("t{i}"),
+                        backlog_id: bl.id,
+                        state: Some(state.clone()),
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+                for tag in tags {
+                    crate::ops::tag::add(&mut conn, task.id, tag).await.unwrap();
+                }
+            }
+            list(
+                &mut conn,
+                bl.id,
+                &ListFilter {
+                    terms: filter.clone(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect()
+        });
+        actual.sort();
+
+        assert_eq!(actual, expected, "filter {filter}");
+    }
+
     // ---- done_at tests ----
 
     #[tokio::test]
