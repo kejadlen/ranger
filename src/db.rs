@@ -152,29 +152,32 @@ mod tests {
         }
         pool.close().await;
 
-        // Run the remaining migrations; the backfill must agree with the
-        // parse that new tags get.
+        // Run the remaining migrations. The backfill must agree with the
+        // parse that new tags get, and keep legacy tags that no longer parse.
         let pool = connect(&db_path).await.unwrap();
-        for name in names.iter().filter(|n| !n.starts_with(':')) {
-            let (key, value): (Option<String>, Option<String>) =
+        let expected = [
+            ("bug", "", "bug"),
+            ("project:ranger", "project", "ranger"),
+            ("url:http://x", "url", "http://x"),
+            (":x", "", "x"),
+            ("x:", "x", ""),
+        ];
+        for (name, want_key, want_value) in expected {
+            let (key, value): (String, String) =
                 sqlx::query_as("SELECT key, value FROM tags WHERE name = ?")
                     .bind(name)
                     .fetch_one(&pool)
                     .await
                     .unwrap();
-            let want = crate::models::TagParts::try_from(*name).unwrap();
-            assert_eq!(key.as_deref(), want.key, "key for {name}");
-            assert_eq!(value.as_deref(), want.value, "value for {name}");
+            assert_eq!(
+                (key.as_str(), value.as_str()),
+                (want_key, want_value),
+                "{name}"
+            );
+            if let Ok(parts) = crate::models::TagParts::try_from(name) {
+                assert_eq!((parts.key, parts.value), (want_key, want_value), "{name}");
+            }
         }
-
-        // An existing key-less tag can't be created anymore, but the
-        // migration keeps it as a bare tag rather than losing it.
-        let (key, value): (Option<String>, Option<String>) =
-            sqlx::query_as("SELECT key, value FROM tags WHERE name = ':x'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!((key, value), (None, None));
     }
 
     #[tokio::test]

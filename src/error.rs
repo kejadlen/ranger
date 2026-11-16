@@ -18,7 +18,7 @@ pub enum RangerError {
     #[error("migration error: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
     #[error(transparent)]
-    EmptyTagKey(#[from] crate::models::EmptyTagKeyError),
+    EmptyTagValue(#[from] crate::models::EmptyTagValueError),
     #[error("{0}")]
     Usage(String),
     #[error("io error: {0}")]
