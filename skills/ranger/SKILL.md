@@ -23,6 +23,7 @@ ranger task create --backlog <name> --state ready --description "..." "Title"
 ranger task create --backlog <name> -B <other> "Title"   # Create already in position
 ranger task list --backlog <name>             # List tasks
 ranger task list --state ready --tag bug      # Filter by state and/or tag
+ranger task list project:ranger -bug state:ready   # Filter terms: tag, key:value, state:, leading - negates
 ranger task list --archived                   # Include archived tasks
 ranger task show <key>                        # Show task details
 ranger task edit <key> --state <state>        # Change task state

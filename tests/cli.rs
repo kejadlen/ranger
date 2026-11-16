@@ -560,6 +560,35 @@ fn full_workflow() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("First task"));
 
+    // Filter by terms, including a negated one
+    let output = ranger(db_path)
+        .args(["task", "list", "frontend", "-bug"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+    assert!(output.status.success(), "term filter failed: {stderr}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("First task"));
+
+    let output = ranger(db_path)
+        .args(["task", "list", "frontend", "-bug"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(
+        stderr.trim(),
+        "No tasks matching 'frontend -bug' in backlog 'Ranger'."
+    );
+
+    // An invalid term is an error
+    let output = ranger(db_path)
+        .args(["task", "list", "state:someday"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid state: 'someday'"), "{stderr}");
+
     // Filter by tag that no task has
     let output = ranger(db_path)
         .args(["task", "list", "--tag", "nonexistent"])

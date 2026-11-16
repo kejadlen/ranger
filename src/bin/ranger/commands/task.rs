@@ -99,6 +99,10 @@ pub enum TaskCommands {
         /// Include archived tasks
         #[arg(long)]
         archived: bool,
+        /// Filter terms, all of which must match: `bug` or `key:value` for a
+        /// tag, `state:<state>` for a state, and a leading `-` to negate
+        #[arg(allow_hyphen_values = true)]
+        terms: Vec<String>,
     },
     /// Show task details
     #[command(visible_alias = "s")]
@@ -215,12 +219,14 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             state,
             tag,
             archived,
+            terms,
         } => {
             let mut conn = pool.acquire().await?;
             let filter = ListFilter {
                 state,
                 include_archived: archived,
                 tag,
+                terms: terms.join(" ").parse()?,
             };
 
             if let Some(backlog_name) = &backlog {
@@ -415,6 +421,11 @@ fn empty_task_note(filter: &ListFilter, backlog: Option<&str>) -> String {
     if let Some(tag) = &filter.tag {
         note.push_str(" tagged #");
         note.push_str(tag);
+    }
+    if !filter.terms.0.is_empty() {
+        note.push_str(" matching '");
+        note.push_str(&filter.terms.to_string());
+        note.push('\'');
     }
     if let Some(name) = backlog {
         note.push_str(" in backlog '");
