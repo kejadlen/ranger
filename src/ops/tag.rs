@@ -53,7 +53,8 @@ pub async fn remove(
     task_id: i64,
     name: &str,
 ) -> Result<(), RangerError> {
-    let parts = TagParts::try_from(name)?;
+    // Don't validate: a tag from before the current rules must stay removable.
+    let parts = TagParts::split(name);
     sqlx::query(
         "DELETE FROM task_tags WHERE task_id = ? \
          AND tag_id = (SELECT id FROM tags WHERE key = ? AND value = ?)",
@@ -262,11 +263,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_rejects_empty_value() {
+    async fn remove_works_for_tags_that_are_no_longer_valid() {
         let (pool, task_id, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        assert!(remove(&mut conn, task_id, "x:").await.is_err());
+        sqlx::raw_sql(&format!(
+            "INSERT INTO tags (key, value) VALUES ('state', 'x'), ('', 'a b');
+             INSERT INTO task_tags (task_id, tag_id) SELECT {task_id}, id FROM tags;"
+        ))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert!(add(&mut conn, task_id, "state:x").await.is_err());
+
+        remove(&mut conn, task_id, "state:x").await.unwrap();
+        remove(&mut conn, task_id, "a b").await.unwrap();
+        assert!(list_for_task(&mut conn, task_id).await.unwrap().is_empty());
     }
 
     #[tokio::test]

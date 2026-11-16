@@ -1707,7 +1707,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, RangerError::EmptyTagValue(_)));
+        assert!(matches!(err, RangerError::InvalidTag(_)));
     }
 
     /// `list` agrees with evaluating the filter directly against each task's
