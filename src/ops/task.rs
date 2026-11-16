@@ -71,7 +71,11 @@ pub struct ListFilter {
 
 impl ListFilter {
     /// All terms, with the `state` and `tag` shorthands appended.
+    /// Fails when `state` is set and the terms also constrain the state.
     pub fn all_terms(&self) -> Result<Vec<Term>, RangerError> {
+        if self.state.is_some() && self.terms.has_state_term() {
+            return Err(RangerError::StateConflict);
+        }
         let mut terms = self.terms.0.clone();
         if let Some(state) = &self.state {
             terms.push(Term {
@@ -1663,6 +1667,28 @@ mod tests {
         .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "b");
+    }
+
+    #[tokio::test]
+    async fn list_rejects_state_with_state_term() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        for terms in ["state:ready", "-state:done"] {
+            let err = list(
+                &mut conn,
+                bl.id,
+                &ListFilter {
+                    state: Some(State::Ready),
+                    terms: terms.parse().unwrap(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(err, RangerError::StateConflict), "{terms}");
+        }
     }
 
     #[tokio::test]

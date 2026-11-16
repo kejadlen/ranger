@@ -609,6 +609,32 @@ fn full_workflow() {
         .collect();
     assert_eq!(tags, ["project:ranger"]);
 
+    // --state and a state: term conflict, on create and list alike
+    for cmd in [
+        &[
+            "task",
+            "--filter",
+            "state:ready",
+            "create",
+            "--state",
+            "done",
+            "X",
+        ][..],
+        &[
+            "task",
+            "list",
+            "--filter",
+            "-state:done",
+            "--state",
+            "ready",
+        ][..],
+    ] {
+        let output = ranger(db_path).args(cmd).output().unwrap();
+        assert!(!output.status.success(), "{cmd:?} should fail");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("--state can't be combined"), "{stderr}");
+    }
+
     // An invalid term is an error
     let output = ranger(db_path)
         .args(["task", "list", "--filter", "state:someday"])

@@ -189,6 +189,10 @@ pub async fn run(
             state,
             position,
         } => {
+            if state.is_some() && filter.has_state_term() {
+                return Err(Error::StateConflict);
+            }
+
             let mut tx = pool.begin().await?;
 
             let bl = ops::backlog::get_by_name(&mut tx, &backlog).await?;

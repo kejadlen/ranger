@@ -43,6 +43,13 @@ impl Filter {
         })
     }
 
+    /// Whether any term, positive or negated, constrains the state.
+    pub fn has_state_term(&self) -> bool {
+        self.0
+            .iter()
+            .any(|term| matches!(term.matcher, Matcher::State(_)))
+    }
+
     /// The first positive state term, which a task created under this filter
     /// starts in unless a state is given explicitly.
     pub fn state(&self) -> Option<&State> {
@@ -202,6 +209,8 @@ mod tests {
         let negated_only: Filter = "-bug -state:done".parse().unwrap();
         assert_eq!(negated_only.tags().count(), 0);
         assert_eq!(negated_only.state(), None);
+        assert!(negated_only.has_state_term());
+        assert!(!"bug".parse::<Filter>().unwrap().has_state_term());
     }
 
     #[test]
