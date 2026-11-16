@@ -53,14 +53,24 @@ pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<
 
     match command {
         TagCommands::Add { task, tag } => {
-            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let t = ops::task::get_by_key_prefix(
+                &mut conn,
+                &task,
+                &super::key_scope(&Default::default()),
+            )
+            .await?;
             let created = ops::tag::add(&mut conn, t.id, &tag).await?;
             output::print(&created, json, |tg| {
                 println!("Tagged {} with {}", task, tg.name)
             });
         }
         TagCommands::Remove { task, tag } => {
-            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let t = ops::task::get_by_key_prefix(
+                &mut conn,
+                &task,
+                &super::key_scope(&Default::default()),
+            )
+            .await?;
             ops::tag::remove(&mut conn, t.id, &tag).await?;
             if !json {
                 println!("Removed tag {} from {}", tag, task);

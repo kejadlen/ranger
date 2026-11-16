@@ -6,7 +6,6 @@ use clap_complete::engine::ArgValueCompleter;
 use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::error::RangerError as Error;
 use ranger::filter::Filter;
-use ranger::key;
 use ranger::models::{State, Task};
 use ranger::ops;
 use ranger::ops::task::{ListFilter, Placement};
@@ -26,20 +25,24 @@ pub struct PositionArgs {
 }
 
 impl PositionArgs {
-    async fn resolve(self, conn: &mut SqliteConnection) -> Result<Option<PositionAnchors>, Error> {
+    async fn resolve(
+        self,
+        conn: &mut SqliteConnection,
+        scope: &Filter,
+    ) -> Result<Option<PositionAnchors>, Error> {
         match (self.before, self.after) {
             (None, None) => Ok(None),
             (Some(b), None) => {
-                let before = ops::task::get_by_key_prefix(conn, &b).await?;
+                let before = ops::task::get_by_key_prefix(conn, &b, scope).await?;
                 Ok(Some(PositionAnchors::Before(before)))
             }
             (None, Some(a)) => {
-                let after = ops::task::get_by_key_prefix(conn, &a).await?;
+                let after = ops::task::get_by_key_prefix(conn, &a, scope).await?;
                 Ok(Some(PositionAnchors::After(after)))
             }
             (Some(b), Some(a)) => {
-                let before = ops::task::get_by_key_prefix(conn, &b).await?;
-                let after = ops::task::get_by_key_prefix(conn, &a).await?;
+                let before = ops::task::get_by_key_prefix(conn, &b, scope).await?;
+                let after = ops::task::get_by_key_prefix(conn, &a, scope).await?;
                 Ok(Some(PositionAnchors::Between { before, after }))
             }
         }
@@ -164,6 +167,8 @@ pub async fn run(
     filter: &Filter,
     json: bool,
 ) -> Result<(), Error> {
+    let scope = super::key_scope(filter);
+
     match command {
         TaskCommands::Create {
             title,
@@ -179,7 +184,7 @@ pub async fn run(
             let mut tx = pool.begin().await?;
 
             let bl = ops::backlog::get_by_name(&mut tx, &backlog).await?;
-            let anchors = position.resolve(&mut tx).await?;
+            let anchors = position.resolve(&mut tx, &scope).await?;
 
             let task = ops::task::create(
                 &mut tx,
@@ -203,8 +208,7 @@ pub async fn run(
             tx.commit().await?;
 
             let mut conn = pool.acquire().await?;
-            let all_keys = ops::task::all_keys(&mut conn).await?;
-            let prefixes = key::unique_prefix_lengths(&all_keys);
+            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
             output::print(&task, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::List {
@@ -223,15 +227,13 @@ pub async fn run(
 
             if let Some(backlog_name) = &backlog {
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
-                let backlog_keys = ops::task::all_keys(&mut conn).await?;
-                let prefixes = key::unique_prefix_lengths(&backlog_keys);
+                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
                 let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
                 let note = empty_task_note(&filter, Some(backlog_name));
                 output::print_list(&tasks, json, &note, |t| print_task(t, &prefixes));
             } else {
                 // List all tasks (no backlog filter)
-                let all_keys = ops::task::all_keys(&mut conn).await?;
-                let prefixes = key::unique_prefix_lengths(&all_keys);
+                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
                 let backlogs = ops::backlog::list(&mut conn).await?;
                 let mut all_tasks = Vec::new();
                 for bl in &backlogs {
@@ -248,7 +250,7 @@ pub async fn run(
         }
         TaskCommands::Show { key } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
             let comments = ops::comment::list(&mut conn, task.id).await?;
             let tags = ops::tag::list_for_task(&mut conn, task.id).await?;
 
@@ -260,8 +262,7 @@ pub async fn run(
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let all_keys = ops::task::all_keys(&mut conn).await?;
-                let prefixes = key::unique_prefix_lengths(&all_keys);
+                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
 
                 print_task_detail(&task, &prefixes);
                 if !tags.is_empty() {
@@ -285,7 +286,7 @@ pub async fn run(
             position,
         } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
 
             let updated = if title.is_none()
                 && description.is_none()
@@ -295,7 +296,7 @@ pub async fn run(
             {
                 edit_in_editor(&mut conn, &task).await?
             } else {
-                let anchors = position.resolve(&mut conn).await?;
+                let anchors = position.resolve(&mut conn, &scope).await?;
                 let updated = ops::task::edit(
                     &mut conn,
                     task.id,
@@ -311,20 +312,18 @@ pub async fn run(
                 updated
             };
 
-            let all_keys = ops::task::all_keys(&mut conn).await?;
-            let prefixes = key::unique_prefix_lengths(&all_keys);
+            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
             output::print(&updated, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::Move { key, position } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
-            let anchors = position.resolve(&mut conn).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
+            let anchors = position.resolve(&mut conn, &scope).await?;
 
             match anchors {
                 Some(anchors) => {
                     ops::task::move_task(&mut conn, &task, anchors.as_placement()).await?;
-                    let all_keys = ops::task::all_keys(&mut conn).await?;
-                    let prefixes = key::unique_prefix_lengths(&all_keys);
+                    let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
                     output::print(&task, json, |t| {
                         println!(
                             "Moved {} {}",
@@ -340,7 +339,7 @@ pub async fn run(
         }
         TaskCommands::Delete { key, yes } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
 
             if !yes {
                 let prompt = format!("Delete task '{}'?", task.title);
@@ -359,8 +358,7 @@ pub async fn run(
                 }
             }
 
-            let all_keys = ops::task::all_keys(&mut conn).await?;
-            let prefixes = key::unique_prefix_lengths(&all_keys);
+            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
             ops::task::delete(&mut conn, task.id).await?;
             output::print(&task, json, |t| {
                 println!(
@@ -372,10 +370,9 @@ pub async fn run(
         }
         TaskCommands::Archive { key } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
             let updated = ops::task::set_archived(&mut conn, task.id, true).await?;
-            let all_keys = ops::task::all_keys(&mut conn).await?;
-            let prefixes = key::unique_prefix_lengths(&all_keys);
+            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
             output::print(&updated, json, |t| {
                 println!(
                     "Archived {} {}",
@@ -386,10 +383,9 @@ pub async fn run(
         }
         TaskCommands::Unarchive { key } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
             let updated = ops::task::set_archived(&mut conn, task.id, false).await?;
-            let all_keys = ops::task::all_keys(&mut conn).await?;
-            let prefixes = key::unique_prefix_lengths(&all_keys);
+            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
             output::print(&updated, json, |t| {
                 println!(
                     "Unarchived {} {}",

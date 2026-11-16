@@ -2,7 +2,6 @@ use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 use ranger::db::SqlitePool;
 use ranger::error::RangerError;
-use ranger::key;
 use ranger::models::{Backlog, State};
 use ranger::ops;
 use ranger::ops::task::ListFilter;
@@ -123,8 +122,8 @@ pub async fn run(
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let backlog_keys = ops::task::all_keys(&mut conn).await?;
-                let prefixes = key::unique_prefix_lengths(&backlog_keys);
+                let scope = super::key_scope(&Default::default());
+                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
 
                 print_backlog_detail(&backlog);
 

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::error::RangerError;
 use crate::filter::{Filter, Matcher, Term};
 use crate::key;
@@ -126,6 +128,20 @@ fn term_clause(term: &Term) -> (String, Vec<&str>) {
     (clause, binds)
 }
 
+/// SQL conditions on `tasks` for every term, each led by ` AND `, with the
+/// values they bind.
+fn terms_sql(terms: &[Term]) -> (String, Vec<&str>) {
+    let mut sql = String::new();
+    let mut binds = Vec::new();
+    for term in terms {
+        let (clause, term_binds) = term_clause(term);
+        sql.push_str(" AND ");
+        sql.push_str(&clause);
+        binds.extend(term_binds);
+    }
+    (sql, binds)
+}
+
 pub async fn list(
     conn: &mut SqliteConnection,
     backlog_id: i64,
@@ -137,13 +153,8 @@ pub async fn list(
     if !filter.include_archived {
         query.push_str(" AND archived = 0");
     }
-    let mut binds = Vec::new();
-    for term in &terms {
-        let (clause, term_binds) = term_clause(term);
-        query.push_str(" AND ");
-        query.push_str(&clause);
-        binds.extend(term_binds);
-    }
+    let (terms_clause, binds) = terms_sql(&terms);
+    query.push_str(&terms_clause);
 
     let is_done_only = terms
         .iter()
@@ -171,6 +182,36 @@ pub async fn all_keys(conn: &mut SqliteConnection) -> Result<Vec<String>, Ranger
     Ok(rows.into_iter().map(|(k,)| k).collect())
 }
 
+/// Keys of the tasks matching `scope`, archived ones included.
+pub async fn keys_in(
+    conn: &mut SqliteConnection,
+    scope: &Filter,
+) -> Result<Vec<String>, RangerError> {
+    let (clause, binds) = terms_sql(&scope.0);
+    let query = format!("SELECT key FROM tasks WHERE 1{clause}");
+    let mut q = sqlx::query_as::<_, (String,)>(&query);
+    for bind in binds {
+        q = q.bind(bind);
+    }
+    let rows = q.fetch_all(&mut *conn).await?;
+    Ok(rows.into_iter().map(|(k,)| k).collect())
+}
+
+/// The shortest prefix length that `get_by_key_prefix` resolves to each key
+/// under `scope`. A key in scope only has to be unique among the scope's
+/// keys. A key outside it has to be unique among all keys, so that it
+/// matches nothing in scope and the lookup falls back to every task.
+pub async fn prefix_lengths(
+    conn: &mut SqliteConnection,
+    scope: &Filter,
+) -> Result<HashMap<String, usize>, RangerError> {
+    let mut lengths = key::unique_prefix_lengths(&all_keys(conn).await?);
+    if !scope.0.is_empty() {
+        lengths.extend(key::unique_prefix_lengths(&keys_in(conn, scope).await?));
+    }
+    Ok(lengths)
+}
+
 pub async fn get_by_id(conn: &mut SqliteConnection, id: i64) -> Result<Task, RangerError> {
     let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?");
     let task = sqlx::query_as::<_, Task>(&query)
@@ -180,17 +221,33 @@ pub async fn get_by_id(conn: &mut SqliteConnection, id: i64) -> Result<Task, Ran
     Ok(task)
 }
 
-/// Find the one task whose key starts with `prefix`, across all backlogs.
+async fn tasks_with_key_prefix(
+    conn: &mut SqliteConnection,
+    pattern: &str,
+    terms: &[Term],
+) -> Result<Vec<Task>, RangerError> {
+    let (clause, binds) = terms_sql(terms);
+    let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE key LIKE ?{clause}");
+    let mut q = sqlx::query_as::<_, Task>(&query).bind(pattern);
+    for bind in binds {
+        q = q.bind(bind);
+    }
+    Ok(q.fetch_all(&mut *conn).await?)
+}
+
+/// Find the one task whose key starts with `prefix`, looking among the tasks
+/// matching `scope` first. When none of them match, every task is searched,
+/// so a valid key always resolves. An empty scope searches every task.
 pub async fn get_by_key_prefix(
     conn: &mut SqliteConnection,
     prefix: &str,
+    scope: &Filter,
 ) -> Result<Task, RangerError> {
     let pattern = format!("{prefix}%");
-    let query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE key LIKE ?");
-    let matches = sqlx::query_as::<_, Task>(&query)
-        .bind(&pattern)
-        .fetch_all(&mut *conn)
-        .await?;
+    let mut matches = tasks_with_key_prefix(conn, &pattern, &scope.0).await?;
+    if matches.is_empty() && !scope.0.is_empty() {
+        matches = tasks_with_key_prefix(conn, &pattern, &[]).await?;
+    }
 
     match matches.len() {
         0 => Err(RangerError::KeyNotFound(prefix.to_string())),
@@ -679,7 +736,9 @@ mod tests {
         .await
         .unwrap();
 
-        let found = get_by_key_prefix(&mut conn, &task.key[..3]).await.unwrap();
+        let found = get_by_key_prefix(&mut conn, &task.key[..3], &Filter::default())
+            .await
+            .unwrap();
         assert_eq!(found.id, task.id);
     }
 
@@ -734,7 +793,7 @@ mod tests {
 
         delete(&mut conn, task.id).await.unwrap();
 
-        let result = get_by_key_prefix(&mut conn, &task.key).await;
+        let result = get_by_key_prefix(&mut conn, &task.key, &Filter::default()).await;
         assert!(result.is_err());
 
         let tasks = list(&mut conn, bl.id, &ListFilter::default())
@@ -783,35 +842,121 @@ mod tests {
             .await
             .unwrap();
 
-        let result = get_by_key_prefix(&mut conn, "kkkk").await;
+        let result = get_by_key_prefix(&mut conn, "kkkk", &Filter::default()).await;
         assert!(result.is_err());
     }
 
+    /// Insert a task with a fixed key and the given tags.
+    async fn insert_keyed(conn: &mut SqliteConnection, bl: i64, key: &str, tags: &[&str]) -> Task {
+        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES (?, ?, ?, 'icebox', 'a')")
+            .bind(key)
+            .bind(bl)
+            .bind(key)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let task = get_by_key_prefix(conn, key, &Filter::default())
+            .await
+            .unwrap();
+        for tag in tags {
+            crate::ops::tag::add(conn, task.id, tag).await.unwrap();
+        }
+        task
+    }
+
     #[tokio::test]
-    async fn get_by_key_prefix_searches_every_backlog() {
+    async fn get_by_key_prefix_prefers_the_scope() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl1 = backlog::create(&mut conn, "Alpha").await.unwrap();
-        let bl2 = backlog::create(&mut conn, "Beta").await.unwrap();
+        let bl = backlog::create(&mut conn, "Alpha").await.unwrap();
+        insert_keyed(&mut conn, bl.id, "kkkkaaaa", &["project:alpha"]).await;
+        insert_keyed(&mut conn, bl.id, "kkkkbbbb", &["project:beta"]).await;
+        insert_keyed(&mut conn, bl.id, "kkkkbccc", &["project:beta"]).await;
+        let alpha: Filter = "project:alpha".parse().unwrap();
+        let beta: Filter = "project:beta".parse().unwrap();
 
-        for (key, bid) in [("kkkkaaaa", bl1.id), ("kkkkbbbb", bl2.id)] {
-            sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES (?, ?, ?, 'icebox', 'a')")
-                .bind(key)
-                .bind(bid)
-                .bind(key)
-                .execute(&mut *conn)
-                .await
-                .unwrap();
-        }
-
-        // A prefix shared across backlogs is ambiguous.
+        // Ambiguous across every task, but unique within the scope.
         assert!(matches!(
-            get_by_key_prefix(&mut conn, "kkkk").await,
+            get_by_key_prefix(&mut conn, "kkkk", &Filter::default()).await,
             Err(RangerError::AmbiguousPrefix(_))
         ));
-        // A longer one finds the task in either backlog.
-        let t = get_by_key_prefix(&mut conn, "kkkkb").await.unwrap();
-        assert_eq!(t.backlog_id, bl2.id);
+        let t = get_by_key_prefix(&mut conn, "kkkk", &alpha).await.unwrap();
+        assert_eq!(t.key, "kkkkaaaa");
+
+        // Nothing in scope matches, so every task is searched.
+        let t = get_by_key_prefix(&mut conn, "kkkkbb", &alpha)
+            .await
+            .unwrap();
+        assert_eq!(t.key, "kkkkbbbb");
+        assert!(matches!(
+            get_by_key_prefix(&mut conn, "kkkkb", &alpha).await,
+            Err(RangerError::AmbiguousPrefix(_))
+        ));
+        assert!(matches!(
+            get_by_key_prefix(&mut conn, "z", &alpha).await,
+            Err(RangerError::KeyNotFound(_))
+        ));
+
+        // Ambiguity inside the scope doesn't fall back.
+        assert!(matches!(
+            get_by_key_prefix(&mut conn, "kkkkb", &beta).await,
+            Err(RangerError::AmbiguousPrefix(_))
+        ));
+
+        let lengths = prefix_lengths(&mut conn, &alpha).await.unwrap();
+        assert_eq!(lengths["kkkkaaaa"], 1);
+        assert_eq!(lengths["kkkkbbbb"], 6);
+        let lengths = prefix_lengths(&mut conn, &Filter::default()).await.unwrap();
+        assert_eq!(lengths["kkkkaaaa"], 5);
+    }
+
+    /// Every prefix `prefix_lengths` gives resolves back to its own task under
+    /// the same scope, whether or not the task is in it.
+    #[hegel::test]
+    fn prop_shown_prefixes_resolve(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+
+        const TAGS: [&str; 3] = ["bug", "project:a", "project:b"];
+        let keys = tc.draw(gs::hashsets(gs::from_regex("[kl]{4}")).max_size(8));
+        let tasks: Vec<(String, Vec<&str>)> = keys
+            .into_iter()
+            .map(|k| {
+                (
+                    k,
+                    tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(2)),
+                )
+            })
+            .collect();
+        let scope = tc.draw(
+            gs::vecs(gs::sampled_from(vec![
+                "bug",
+                "-bug",
+                "project:a",
+                "-project:b",
+            ]))
+            .max_size(2),
+        );
+        let scope: Filter = scope.join(" ").parse().unwrap();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = tempdir().unwrap();
+            let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
+            let mut conn = pool.acquire().await.unwrap();
+            let bl = backlog::create(&mut conn, "Test").await.unwrap();
+            for (key, tags) in &tasks {
+                insert_keyed(&mut conn, bl.id, key, tags).await;
+            }
+            let lengths = prefix_lengths(&mut conn, &scope).await.unwrap();
+            for (key, _) in &tasks {
+                let prefix = &key[..lengths[key]];
+                let found = get_by_key_prefix(&mut conn, prefix, &scope).await.unwrap();
+                assert_eq!(&found.key, key, "{prefix:?} under {scope}");
+            }
+        });
     }
 
     #[tokio::test]

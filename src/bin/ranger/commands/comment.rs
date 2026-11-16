@@ -36,14 +36,24 @@ pub async fn run(
 
     match command {
         CommentCommands::Add { task, body } => {
-            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let t = ops::task::get_by_key_prefix(
+                &mut conn,
+                &task,
+                &super::key_scope(&Default::default()),
+            )
+            .await?;
             let comment = ops::comment::add(&mut conn, t.id, &body).await?;
             output::print(&comment, json, |c| {
                 println!("[{}] {}", c.created_at, c.body);
             });
         }
         CommentCommands::List { task } => {
-            let t = ops::task::get_by_key_prefix(&mut conn, &task).await?;
+            let t = ops::task::get_by_key_prefix(
+                &mut conn,
+                &task,
+                &super::key_scope(&Default::default()),
+            )
+            .await?;
             let comments = ops::comment::list(&mut conn, t.id).await?;
             let note = format!("No comments on task {}.", t.key);
             output::print_list(&comments, json, &note, |c| {
