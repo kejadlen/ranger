@@ -30,6 +30,29 @@ pub struct Term {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter(pub Vec<Term>);
 
+impl Filter {
+    /// The positive tag terms. A task created under this filter gets these
+    /// tags, so it shows up in the listing it was created from.
+    pub fn tags(&self) -> impl Iterator<Item = TagParts<'_>> {
+        self.0.iter().filter_map(|term| match &term.matcher {
+            Matcher::Tag { key, value } if !term.negated => Some(TagParts {
+                key: key.as_str(),
+                value: value.as_str(),
+            }),
+            _ => None,
+        })
+    }
+
+    /// The first positive state term, which a task created under this filter
+    /// starts in unless a state is given explicitly.
+    pub fn state(&self) -> Option<&State> {
+        self.0.iter().find_map(|term| match &term.matcher {
+            Matcher::State(state) if !term.negated => Some(state),
+            _ => None,
+        })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum FilterError {
     #[error("'-' needs a term after it, as in '-bug'")]
@@ -165,6 +188,20 @@ mod tests {
     fn rejects_empty_tag_value() {
         let err = "-x:".parse::<Filter>().unwrap_err();
         assert!(matches!(err, FilterError::EmptyTagValue(_)));
+    }
+
+    #[test]
+    fn tags_and_state_for_new_tasks() {
+        let filter: Filter = "project:ranger -someday bug -state:done state:ready state:icebox"
+            .parse()
+            .unwrap();
+        let tags: Vec<String> = filter.tags().map(|t| t.to_string()).collect();
+        assert_eq!(tags, ["project:ranger", "bug"]);
+        assert_eq!(filter.state(), Some(&State::Ready));
+
+        let negated_only: Filter = "-bug -state:done".parse().unwrap();
+        assert_eq!(negated_only.tags().count(), 0);
+        assert_eq!(negated_only.state(), None);
     }
 
     #[test]

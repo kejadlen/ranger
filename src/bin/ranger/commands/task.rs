@@ -5,6 +5,7 @@ use clap::{Args, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
 use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::error::RangerError as Error;
+use ranger::filter::Filter;
 use ranger::key;
 use ranger::models::{State, Task};
 use ranger::ops;
@@ -99,10 +100,6 @@ pub enum TaskCommands {
         /// Include archived tasks
         #[arg(long)]
         archived: bool,
-        /// Filter terms, all of which must match: `bug` or `key:value` for a
-        /// tag, `state:<state>` for a state, and a leading `-` to negate
-        #[arg(allow_hyphen_values = true)]
-        terms: Vec<String>,
     },
     /// Show task details
     #[command(visible_alias = "s")]
@@ -176,7 +173,12 @@ pub async fn default_backlog_id(pool: &SqlitePool) -> Option<i64> {
         .map(|b| b.id)
 }
 
-pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result<(), Error> {
+pub async fn run(
+    pool: &SqlitePool,
+    command: TaskCommands,
+    filter: &Filter,
+    json: bool,
+) -> Result<(), Error> {
     let backlog_scope = default_backlog_id(pool).await;
 
     match command {
@@ -197,11 +199,15 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 ops::task::CreateTask {
                     title: &title,
                     backlog_id: bl.id,
-                    state,
+                    state: state.or_else(|| filter.state().cloned()),
                     description: description.as_deref(),
                 },
             )
             .await?;
+
+            for tag in filter.tags() {
+                ops::tag::add(&mut tx, task.id, &tag.to_string()).await?;
+            }
 
             if let Some(ref anchors) = anchors {
                 ops::task::move_task(&mut tx, &task, anchors.as_placement()).await?;
@@ -219,14 +225,13 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             state,
             tag,
             archived,
-            terms,
         } => {
             let mut conn = pool.acquire().await?;
             let filter = ListFilter {
                 state,
                 include_archived: archived,
                 tag,
-                terms: terms.join(" ").parse()?,
+                terms: filter.clone(),
             };
 
             if let Some(backlog_name) = &backlog {
