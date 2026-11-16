@@ -26,4 +26,5 @@ tempfile = "*"
 
 [dev-dependencies]
 assert_cmd = "*"
+hegeltest = "0.52.6"
 predicates = "3.1.4"

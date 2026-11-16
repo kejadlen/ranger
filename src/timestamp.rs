@@ -47,6 +47,24 @@ impl sqlx::Encode<'_, sqlx::Sqlite> for Timestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hegel::TestCase;
+    use hegel::generators as gs;
+
+    #[hegel::test]
+    fn prop_display_parses_back(tc: TestCase) {
+        // Display drops sub-second precision, so whole seconds roundtrip.
+        // `%Y` only reparses for years 0000-9999, which covers anything
+        // SQLite's `strftime` hands us.
+        let min = "0000-01-01T00:00:00Z"
+            .parse::<jiff::Timestamp>()
+            .unwrap()
+            .as_second();
+        let max = jiff::Timestamp::MAX.as_second();
+        let secs = tc.draw(gs::integers::<i64>().min_value(min).max_value(max));
+        let ts = Timestamp(jiff::Timestamp::from_second(secs).unwrap());
+        let parsed: jiff::Timestamp = ts.to_string().parse().unwrap();
+        assert_eq!(Timestamp(parsed), ts);
+    }
 
     #[test]
     fn display_formats_as_iso8601() {

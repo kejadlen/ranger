@@ -67,6 +67,77 @@ fn fill(lo: &str, hi: &str, n: usize, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hegel::TestCase;
+    use hegel::generators as gs;
+
+    /// A position as `between` produces it: one or more `a`-`z` digits, never
+    /// ending in `a`. A trailing `a` would leave no room below the string
+    /// (nothing sorts between `m` and `ma`), and `between` never emits one.
+    fn positions() -> impl hegel::PrintableGenerator<String> {
+        gs::from_regex("[a-z]{0,8}[b-z]")
+    }
+
+    fn assert_valid_position(pos: &str) {
+        assert!(!pos.is_empty(), "empty position");
+        assert!(
+            pos.bytes().all(|c| c.is_ascii_lowercase()),
+            "{pos:?} has a non a-z digit"
+        );
+        assert!(!pos.ends_with('a'), "{pos:?} ends in 'a'");
+    }
+
+    #[hegel::test]
+    fn prop_between_two_positions_is_strictly_between(tc: TestCase) {
+        let x = tc.draw(positions());
+        let y = tc.draw(positions());
+        tc.assume(x != y);
+        let (lo, hi) = if x < y { (x, y) } else { (y, x) };
+
+        let mid = between(&lo, &hi);
+        assert_valid_position(&mid);
+        assert!(lo < mid && mid < hi, "{lo:?} < {mid:?} < {hi:?}");
+    }
+
+    #[hegel::test]
+    fn prop_between_open_bounds(tc: TestCase) {
+        let pos = tc.draw(positions());
+
+        let after = between(&pos, "");
+        assert_valid_position(&after);
+        assert!(after > pos, "{after:?} > {pos:?}");
+
+        let before = between("", &pos);
+        assert_valid_position(&before);
+        assert!(before < pos, "{before:?} < {pos:?}");
+    }
+
+    #[hegel::test]
+    fn prop_repeated_inserts_stay_sorted(tc: TestCase) {
+        // Each step inserts a new position into a random gap (including the
+        // open ends) of a growing list, as moving tasks around does.
+        let mut list: Vec<String> = Vec::new();
+        let steps = tc.draw(gs::integers::<usize>().max_value(40));
+        for _ in 0..steps {
+            let gap = tc.draw(gs::integers::<usize>().max_value(list.len()));
+            let lo = if gap == 0 { "" } else { list[gap - 1].as_str() };
+            let hi = list.get(gap).map_or("", String::as_str);
+            let pos = between(lo, hi);
+            assert_valid_position(&pos);
+            list.insert(gap, pos);
+        }
+        assert!(list.windows(2).all(|w| w[0] < w[1]), "{list:?}");
+    }
+
+    #[hegel::test]
+    fn prop_spread_is_sorted_and_sized(tc: TestCase) {
+        let n = tc.draw(gs::integers::<usize>().max_value(500));
+        let out = spread(n);
+        assert_eq!(out.len(), n);
+        for pos in &out {
+            assert_valid_position(pos);
+        }
+        assert!(out.windows(2).all(|w| w[0] < w[1]), "{out:?}");
+    }
 
     #[test]
     fn between_empty_bounds() {
