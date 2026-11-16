@@ -912,3 +912,44 @@ fn empty_lists_other_commands() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["project:Ranger"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn keys_resolve_outside_the_default_backlog() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+
+    for name in ["Ranger", "Other"] {
+        ranger(db_path)
+            .args(["backlog", "create", name])
+            .assert()
+            .success();
+    }
+    let output = ranger(db_path)
+        .args([
+            "task",
+            "create",
+            "Elsewhere",
+            "--backlog",
+            "Other",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let task: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let key = task["key"].as_str().unwrap();
+
+    // RANGER_DEFAULT_BACKLOG is Ranger, but the key still resolves.
+    ranger(db_path)
+        .args(["task", "edit", key, "--title", "Found"])
+        .assert()
+        .success();
+    ranger(db_path)
+        .args(["comment", "add", key, "hello"])
+        .assert()
+        .success();
+    let detail = task_detail(db_path, key);
+    assert_eq!(detail["task"]["title"], "Found");
+}

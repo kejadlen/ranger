@@ -123,7 +123,7 @@ pub async fn run(
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let backlog_keys = ops::task::keys_for_backlog(&mut conn, backlog.id).await?;
+                let backlog_keys = ops::task::all_keys(&mut conn).await?;
                 let prefixes = key::unique_prefix_lengths(&backlog_keys);
 
                 print_backlog_detail(&backlog);

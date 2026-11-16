@@ -99,7 +99,7 @@ async fn api_move_task(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let task = ops::task::get_by_key_prefix(&mut conn, &key, None)
+    let task = ops::task::get_by_key_prefix(&mut conn, &key)
         .await
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
 
@@ -118,10 +118,10 @@ async fn api_move_task(
         // Position within the new state group
         match (&body.before, &body.after) {
             (Some(b), Some(a)) => {
-                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                let before = ops::task::get_by_key_prefix(&mut conn, b)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
-                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                let after = ops::task::get_by_key_prefix(&mut conn, a)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
                 ops::task::move_task(
@@ -136,7 +136,7 @@ async fn api_move_task(
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             }
             (Some(b), None) => {
-                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                let before = ops::task::get_by_key_prefix(&mut conn, b)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
                 ops::task::move_task(&mut conn, &updated, ops::task::Placement::Before(&before))
@@ -144,7 +144,7 @@ async fn api_move_task(
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             }
             (None, Some(a)) => {
-                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                let after = ops::task::get_by_key_prefix(&mut conn, a)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
                 ops::task::move_task(&mut conn, &updated, ops::task::Placement::After(&after))
@@ -159,10 +159,10 @@ async fn api_move_task(
         // No state change — just reorder within same state
         match (&body.before, &body.after) {
             (Some(b), Some(a)) => {
-                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                let before = ops::task::get_by_key_prefix(&mut conn, b)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
-                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                let after = ops::task::get_by_key_prefix(&mut conn, a)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
                 ops::task::move_task(
@@ -177,7 +177,7 @@ async fn api_move_task(
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             }
             (Some(b), None) => {
-                let before = ops::task::get_by_key_prefix(&mut conn, b, None)
+                let before = ops::task::get_by_key_prefix(&mut conn, b)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
                 ops::task::move_task(&mut conn, &task, ops::task::Placement::Before(&before))
@@ -185,7 +185,7 @@ async fn api_move_task(
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             }
             (None, Some(a)) => {
-                let after = ops::task::get_by_key_prefix(&mut conn, a, None)
+                let after = ops::task::get_by_key_prefix(&mut conn, a)
                     .await
                     .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
                 ops::task::move_task(&mut conn, &task, ops::task::Placement::After(&after))
@@ -236,7 +236,7 @@ async fn render_board(
     let backlog_names: Vec<String> = backlogs.iter().map(|b| b.name.clone()).collect();
 
     let backlog = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
-    let all_keys = ops::task::keys_for_backlog(&mut conn, backlog.id).await?;
+    let all_keys = ops::task::all_keys(&mut conn).await?;
     let prefixes = key::unique_prefix_lengths(&all_keys);
 
     let mut in_progress = Vec::new();

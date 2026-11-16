@@ -65,13 +65,7 @@ Flags are spelled out in full: `--description`, not `--desc`; `--backlog` has no
 
 ### Backlog scoping
 
-The `RANGER_DEFAULT_BACKLOG` env var sets the default `--backlog` value so you can omit it. It also scopes *key lookup*: every command that takes a task key resolves it only within that backlog. Since none of them accept `--backlog`, reaching a task in another backlog means overriding the env var for the call:
-
-```bash
-RANGER_DEFAULT_BACKLOG=other ranger task move <key> -B <anchor>
-```
-
-A key that plainly exists but errors with `no key matching prefix` is this — wrong backlog, not a wrong key.
+The `RANGER_DEFAULT_BACKLOG` env var sets the default `--backlog` value so you can omit it, and limits `tag list` to that backlog's tags. Task keys resolve across every backlog, so a key from another backlog works without overriding it. `-B`/`-A` anchors must be in the same backlog as the task being placed.
 
 Task keys are short prefixes (e.g. `tl`) of longer IDs — use just enough to be unique. There is no `--top` or `--bottom` flag; to move to the top, use `-B` with the first task's key.
 
