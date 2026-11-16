@@ -1,18 +1,11 @@
 use crate::error::RangerError;
-use crate::models::Tag;
+use crate::models::{Tag, TagParts};
 use sqlx::SqliteConnection;
-
-/// Split a tag name into its key and value on the first colon.
-/// Bare tags such as `bug` have neither.
-pub fn parse(name: &str) -> (Option<&str>, Option<&str>) {
-    match name.split_once(':') {
-        Some((key, value)) => (Some(key), Some(value)),
-        None => (None, None),
-    }
-}
 
 /// Get or create a tag by name. Returns the existing tag if it already exists.
 pub async fn get_or_create(conn: &mut SqliteConnection, name: &str) -> Result<Tag, RangerError> {
+    let TagParts { key, value } = TagParts::try_from(name)?;
+
     if let Some(tag) =
         sqlx::query_as::<_, Tag>("SELECT id, name, key, value FROM tags WHERE name = ?")
             .bind(name)
@@ -22,7 +15,6 @@ pub async fn get_or_create(conn: &mut SqliteConnection, name: &str) -> Result<Ta
         return Ok(tag);
     }
 
-    let (key, value) = parse(name);
     sqlx::query("INSERT INTO tags (name, key, value) VALUES (?, ?, ?)")
         .bind(name)
         .bind(key)
@@ -190,17 +182,13 @@ mod tests {
         (pool, bl1.id, bl2.id, t1.id, t2.id, dir)
     }
 
-    #[test]
-    fn parse_bare_tag() {
-        assert_eq!(parse("bug"), (None, None));
-    }
+    #[tokio::test]
+    async fn add_rejects_empty_key() {
+        let (pool, task_id, _dir) = setup().await;
+        let mut conn = pool.acquire().await.unwrap();
 
-    #[test]
-    fn parse_splits_on_first_colon() {
-        assert_eq!(parse("project:ranger"), (Some("project"), Some("ranger")));
-        assert_eq!(parse("url:http://x"), (Some("url"), Some("http://x")));
-        assert_eq!(parse(":x"), (Some(""), Some("x")));
-        assert_eq!(parse("x:"), (Some("x"), Some("")));
+        assert!(add(&mut conn, task_id, ":x").await.is_err());
+        assert!(list_all(&mut conn).await.unwrap().is_empty());
     }
 
     #[tokio::test]

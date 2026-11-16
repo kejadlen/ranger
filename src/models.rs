@@ -112,6 +112,37 @@ pub struct Tag {
     pub value: Option<String>,
 }
 
+/// A tag name split into its key and value on the first colon. Bare tags
+/// such as `bug` have neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TagParts<'a> {
+    pub key: Option<&'a str>,
+    pub value: Option<&'a str>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("tag '{0}' has no key before its colon; drop the colon or add a key, as in 'project{0}'")]
+pub struct EmptyTagKeyError(String);
+
+impl<'a> TryFrom<&'a str> for TagParts<'a> {
+    type Error = EmptyTagKeyError;
+
+    /// Rejects a name with nothing before its colon, such as `:x`.
+    fn try_from(name: &'a str) -> Result<Self, Self::Error> {
+        match name.split_once(':') {
+            Some(("", _)) => Err(EmptyTagKeyError(name.to_string())),
+            Some((key, value)) => Ok(TagParts {
+                key: Some(key),
+                value: Some(value),
+            }),
+            None => Ok(TagParts {
+                key: None,
+                value: None,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Comment {
     pub id: i64,
@@ -123,6 +154,40 @@ pub struct Comment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parts<'a>(key: Option<&'a str>, value: Option<&'a str>) -> TagParts<'a> {
+        TagParts { key, value }
+    }
+
+    #[test]
+    fn tag_parts_bare_tag() {
+        assert_eq!(TagParts::try_from("bug").unwrap(), parts(None, None));
+    }
+
+    #[test]
+    fn tag_parts_split_on_first_colon() {
+        assert_eq!(
+            TagParts::try_from("project:ranger").unwrap(),
+            parts(Some("project"), Some("ranger"))
+        );
+        assert_eq!(
+            TagParts::try_from("url:http://x").unwrap(),
+            parts(Some("url"), Some("http://x"))
+        );
+        assert_eq!(
+            TagParts::try_from("x:").unwrap(),
+            parts(Some("x"), Some(""))
+        );
+    }
+
+    #[test]
+    fn tag_parts_reject_empty_key() {
+        let err = TagParts::try_from(":x").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "tag ':x' has no key before its colon; drop the colon or add a key, as in 'project:x'"
+        );
+    }
 
     #[test]
     fn state_roundtrips_through_display_and_parse() {
