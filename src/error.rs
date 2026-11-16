@@ -19,6 +19,12 @@ pub enum RangerError {
     Migrate(#[from] sqlx::migrate::MigrateError),
     #[error(transparent)]
     EmptyTagValue(#[from] crate::models::EmptyTagValueError),
+    #[error(transparent)]
+    InvalidFilter(#[from] crate::filter::FilterError),
+    #[error(
+        "--state can't be combined with a state: term in --filter; give the state in one place"
+    )]
+    StateConflict,
     #[error("{0}")]
     Usage(String),
     #[error("io error: {0}")]

@@ -41,6 +41,13 @@ enum Commands {
     /// Manage tasks
     #[command(visible_alias = "t")]
     Task {
+        /// Space-separated filter terms: `bug` or `key:value` for a tag,
+        /// `state:<state>` for a state, and a leading `-` to negate. `list`
+        /// shows only tasks matching every term; `create` adds the positive
+        /// tags and takes the first positive state. Key lookup ignores it.
+        /// Example: --filter "project:ranger -bug"
+        #[arg(long, global = true, allow_hyphen_values = true)]
+        filter: Option<ranger::filter::Filter>,
         #[command(subcommand)]
         command: commands::task::TaskCommands,
     },
@@ -104,8 +111,9 @@ async fn async_main() -> miette::Result<()> {
         Some(Commands::Backlog { command }) => {
             commands::backlog::run(&pool, command, cli.json).await?;
         }
-        Some(Commands::Task { command }) => {
-            commands::task::run(&pool, command, cli.json).await?;
+        Some(Commands::Task { filter, command }) => {
+            let filter = filter.unwrap_or_default();
+            commands::task::run(&pool, command, &filter, cli.json).await?;
         }
         Some(Commands::Comment { command }) => {
             commands::comment::run(&pool, command, cli.json).await?;

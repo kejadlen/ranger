@@ -1,6 +1,7 @@
 use crate::error::RangerError;
+use crate::filter::{Filter, Matcher, Term};
 use crate::key;
-use crate::models::{State, Task};
+use crate::models::{State, TagParts, Task};
 use crate::position;
 use sqlx::sqlite::SqliteConnection;
 
@@ -59,9 +60,59 @@ pub async fn create(
 
 #[derive(Default)]
 pub struct ListFilter {
+    /// Shorthand for a `state:` term.
     pub state: Option<State>,
     pub include_archived: bool,
+    /// Shorthand for a tag term.
     pub tag: Option<String>,
+    /// Filter terms; every one must match.
+    pub terms: Filter,
+}
+
+impl ListFilter {
+    /// All terms, with the `state` and `tag` shorthands appended.
+    /// Fails when `state` is set and the terms also constrain the state.
+    pub fn all_terms(&self) -> Result<Vec<Term>, RangerError> {
+        if self.state.is_some() && self.terms.has_state_term() {
+            return Err(RangerError::StateConflict);
+        }
+        let mut terms = self.terms.0.clone();
+        if let Some(state) = &self.state {
+            terms.push(Term {
+                negated: false,
+                matcher: Matcher::State(state.clone()),
+            });
+        }
+        if let Some(tag) = &self.tag {
+            let parts = TagParts::try_from(tag.as_str())?;
+            terms.push(Term {
+                negated: false,
+                matcher: Matcher::Tag {
+                    key: parts.key.to_string(),
+                    value: parts.value.to_string(),
+                },
+            });
+        }
+        Ok(terms)
+    }
+}
+
+/// A SQL condition on `tasks` for one term, with the values it binds.
+fn term_clause(term: &Term) -> (String, Vec<&str>) {
+    let (clause, binds) = match &term.matcher {
+        Matcher::Tag { key, value } => (
+            "EXISTS (SELECT 1 FROM task_tags tt JOIN tags tg ON tg.id = tt.tag_id \
+             WHERE tt.task_id = tasks.id AND tg.key = ? AND tg.value = ?)",
+            vec![key.as_str(), value.as_str()],
+        ),
+        Matcher::State(state) => ("tasks.state = ?", vec![state.as_str()]),
+    };
+    let clause = if term.negated {
+        format!("NOT ({clause})")
+    } else {
+        clause.to_string()
+    };
+    (clause, binds)
 }
 
 pub async fn list(
@@ -69,54 +120,34 @@ pub async fn list(
     backlog_id: i64,
     filter: &ListFilter,
 ) -> Result<Vec<Task>, RangerError> {
-    let archived_clause = if filter.include_archived {
-        ""
-    } else {
-        " AND archived = 0"
-    };
-    let tag = filter
-        .tag
-        .as_deref()
-        .map(crate::models::TagParts::try_from)
-        .transpose()?;
-    let tag_join = if tag.is_some() {
-        " JOIN task_tags tt ON tasks.id = tt.task_id \
-         JOIN tags tg ON tt.tag_id = tg.id AND tg.key = ? AND tg.value = ?"
-    } else {
-        ""
-    };
+    let terms = filter.all_terms()?;
 
-    let is_done_only = filter.state.as_ref() == Some(&State::Done);
-    let order_clause = if is_done_only {
+    let mut query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE backlog_id = ?");
+    if !filter.include_archived {
+        query.push_str(" AND archived = 0");
+    }
+    let mut binds = Vec::new();
+    for term in &terms {
+        let (clause, term_binds) = term_clause(term);
+        query.push_str(" AND ");
+        query.push_str(&clause);
+        binds.extend(term_binds);
+    }
+
+    let is_done_only = terms
+        .iter()
+        .any(|t| !t.negated && t.matcher == Matcher::State(State::Done));
+    query.push_str(if is_done_only {
         " ORDER BY done_at"
     } else {
         " ORDER BY position"
-    };
+    });
 
-    let tasks = if let Some(state) = &filter.state {
-        let query = format!(
-            "SELECT {TASK_COLUMNS} FROM tasks{tag_join} \
-             WHERE backlog_id = ? AND state = ?{archived_clause}{order_clause}"
-        );
-        let mut q = sqlx::query_as::<_, Task>(&query);
-        if let Some(tag) = &tag {
-            q = q.bind(tag.key).bind(tag.value);
-        }
-        q.bind(backlog_id)
-            .bind(state.as_str())
-            .fetch_all(&mut *conn)
-            .await?
-    } else {
-        let query = format!(
-            "SELECT {TASK_COLUMNS} FROM tasks{tag_join} \
-             WHERE backlog_id = ?{archived_clause}{order_clause}"
-        );
-        let mut q = sqlx::query_as::<_, Task>(&query);
-        if let Some(tag) = &tag {
-            q = q.bind(tag.key).bind(tag.value);
-        }
-        q.bind(backlog_id).fetch_all(&mut *conn).await?
-    };
+    let mut q = sqlx::query_as::<_, Task>(&query).bind(backlog_id);
+    for bind in binds {
+        q = q.bind(bind);
+    }
+    let tasks = q.fetch_all(&mut *conn).await?;
 
     Ok(tasks)
 }
@@ -1522,6 +1553,264 @@ mod tests {
         .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Tagged ready");
+    }
+
+    // ---- filter term tests ----
+
+    async fn titles(conn: &mut SqliteConnection, backlog_id: i64, terms: &str) -> Vec<String> {
+        list(
+            conn,
+            backlog_id,
+            &ListFilter {
+                terms: terms.parse().unwrap(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|t| t.title)
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn list_applies_filter_terms() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let mut make = async |title, state, tags: &[&str]| {
+            let task = create(
+                &mut conn,
+                CreateTask {
+                    title,
+                    backlog_id: bl.id,
+                    state: Some(state),
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+            for tag in tags {
+                crate::ops::tag::add(&mut conn, task.id, tag).await.unwrap();
+            }
+        };
+        make("ranger bug", State::Ready, &["project:ranger", "bug"]).await;
+        make("ranger chore", State::Icebox, &["project:ranger"]).await;
+        make("dotfiles bug", State::Ready, &["project:dotfiles", "bug"]).await;
+        make("done bug", State::Done, &["bug"]).await;
+
+        assert_eq!(
+            titles(&mut conn, bl.id, "project:ranger").await,
+            ["ranger bug", "ranger chore"]
+        );
+        assert_eq!(
+            titles(&mut conn, bl.id, "bug -project:ranger").await,
+            ["dotfiles bug", "done bug"]
+        );
+        assert_eq!(
+            titles(&mut conn, bl.id, ":bug state:ready").await,
+            ["ranger bug", "dotfiles bug"]
+        );
+        assert_eq!(
+            titles(&mut conn, bl.id, "-state:ready -state:done").await,
+            ["ranger chore"]
+        );
+        assert_eq!(titles(&mut conn, bl.id, "state:done").await, ["done bug"]);
+        assert!(
+            titles(&mut conn, bl.id, "project:ranger -bug -state:icebox")
+                .await
+                .is_empty()
+        );
+        assert_eq!(titles(&mut conn, bl.id, "").await.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn list_combines_shorthand_with_terms() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        for (title, state) in [
+            ("a", State::Ready),
+            ("b", State::Ready),
+            ("c", State::Icebox),
+        ] {
+            let task = create(
+                &mut conn,
+                CreateTask {
+                    title,
+                    backlog_id: bl.id,
+                    state: Some(state),
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+            if title != "b" {
+                crate::ops::tag::add(&mut conn, task.id, "bug")
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let results = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                state: Some(State::Ready),
+                terms: "-bug".parse().unwrap(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "b");
+    }
+
+    #[tokio::test]
+    async fn list_rejects_state_with_state_term() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        for terms in ["state:ready", "-state:done"] {
+            let err = list(
+                &mut conn,
+                bl.id,
+                &ListFilter {
+                    state: Some(State::Ready),
+                    terms: terms.parse().unwrap(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(err, RangerError::StateConflict), "{terms}");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_rejects_invalid_tag_shorthand() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let bl = backlog::create(&mut conn, "Test").await.unwrap();
+
+        let err = list(
+            &mut conn,
+            bl.id,
+            &ListFilter {
+                tag: Some("x:".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, RangerError::EmptyTagValue(_)));
+    }
+
+    /// `list` agrees with evaluating the filter directly against each task's
+    /// state and tags.
+    #[hegel::test]
+    fn prop_list_matches_reference_model(tc: hegel::TestCase) {
+        use crate::filter::{Filter, Matcher, Term};
+        use hegel::generators as gs;
+
+        const STATES: [State; 4] = [State::Icebox, State::Ready, State::InProgress, State::Done];
+        // Includes a bare tag whose value has a colon and one starting with
+        // `-`, which the term syntax has to spell carefully.
+        const TAGS: [&str; 5] = ["bug", "project:ranger", "project:dotfiles", ":a:b", "-x"];
+
+        let task_count = tc.draw(gs::integers::<usize>().max_value(6));
+        let tasks: Vec<(State, Vec<&str>)> = (0..task_count)
+            .map(|_| {
+                let state = tc.draw(gs::sampled_from(STATES.to_vec()));
+                let tags = tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(3));
+                (state, tags)
+            })
+            .collect();
+
+        let term_count = tc.draw(gs::integers::<usize>().max_value(3));
+        let terms: Vec<Term> = (0..term_count)
+            .map(|_| {
+                let negated = tc.draw(gs::booleans());
+                let matcher = if tc.draw(gs::booleans()) {
+                    Matcher::State(tc.draw(gs::sampled_from(STATES.to_vec())))
+                } else {
+                    let parts =
+                        TagParts::try_from(tc.draw(gs::sampled_from(TAGS.to_vec()))).unwrap();
+                    Matcher::Tag {
+                        key: parts.key.to_string(),
+                        value: parts.value.to_string(),
+                    }
+                };
+                Term { negated, matcher }
+            })
+            .collect();
+        // Go through the text syntax, as the CLI does.
+        let filter: Filter = Filter(terms).to_string().parse().unwrap();
+
+        let matches = |state: &State, tags: &[&str], term: &Term| {
+            let hit = match &term.matcher {
+                Matcher::State(s) => s == state,
+                Matcher::Tag { key, value } => tags.iter().any(|t| {
+                    let parts = TagParts::try_from(*t).unwrap();
+                    parts.key == key && parts.value == value
+                }),
+            };
+            hit != term.negated
+        };
+        let mut expected: Vec<String> = tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, (state, tags))| filter.0.iter().all(|t| matches(state, tags, t)))
+            .map(|(i, _)| format!("t{i}"))
+            .collect();
+        expected.sort();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut actual: Vec<String> = rt.block_on(async {
+            let dir = tempdir().unwrap();
+            let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
+            let mut conn = pool.acquire().await.unwrap();
+            let bl = backlog::create(&mut conn, "Test").await.unwrap();
+            for (i, (state, tags)) in tasks.iter().enumerate() {
+                let task = create(
+                    &mut conn,
+                    CreateTask {
+                        title: &format!("t{i}"),
+                        backlog_id: bl.id,
+                        state: Some(state.clone()),
+                        description: None,
+                    },
+                )
+                .await
+                .unwrap();
+                for tag in tags {
+                    crate::ops::tag::add(&mut conn, task.id, tag).await.unwrap();
+                }
+            }
+            list(
+                &mut conn,
+                bl.id,
+                &ListFilter {
+                    terms: filter.clone(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect()
+        });
+        actual.sort();
+
+        assert_eq!(actual, expected, "filter {filter}");
     }
 
     // ---- done_at tests ----

@@ -3,8 +3,11 @@ use crate::models::{Tag, TagParts};
 use sqlx::SqliteConnection;
 
 /// Tag columns for `query_as::<_, Tag>`, deriving `name` from the key and
-/// value. Selects from a table aliased `t`.
-const TAG_COLUMNS: &str = "t.id, CASE WHEN t.key = '' THEN t.value ELSE t.key || ':' || t.value END AS name, \
+/// value the same way `TagParts` displays it: a bare tag drops its empty
+/// key unless the value has a colon. Selects from a table aliased `t`.
+const TAG_COLUMNS: &str = "t.id, \
+     CASE WHEN t.key = '' AND instr(t.value, ':') = 0 THEN t.value \
+     ELSE t.key || ':' || t.value END AS name, \
      t.key, t.value";
 
 /// Get or create a tag by name. Returns the existing tag if it already exists.
@@ -181,6 +184,39 @@ mod tests {
         .await
         .unwrap();
         (pool, bl1.id, bl2.id, t1.id, t2.id, dir)
+    }
+
+    /// The name the database derives for a tag is the canonical name
+    /// `TagParts` displays, so it names the same tag when typed back in.
+    #[hegel::test]
+    fn prop_stored_name_is_canonical(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+
+        let names =
+            tc.draw(gs::vecs(gs::text().alphabet("ab:-é").min_size(1).max_size(6)).max_size(4));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let (pool, task_id, _dir) = setup().await;
+            let mut conn = pool.acquire().await.unwrap();
+            for name in &names {
+                let Ok(parts) = TagParts::try_from(name.as_str()) else {
+                    assert!(add(&mut conn, task_id, name).await.is_err());
+                    continue;
+                };
+                let tag = add(&mut conn, task_id, name).await.unwrap();
+                assert_eq!(tag.name, parts.to_string(), "{name:?}");
+                assert_eq!(
+                    (tag.key.as_str(), tag.value.as_str()),
+                    (parts.key, parts.value)
+                );
+                let again = add(&mut conn, task_id, &tag.name).await.unwrap();
+                assert_eq!(again.id, tag.id, "{name:?} vs {:?}", tag.name);
+            }
+        });
     }
 
     #[tokio::test]

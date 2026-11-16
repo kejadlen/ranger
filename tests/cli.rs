@@ -560,6 +560,90 @@ fn full_workflow() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("First task"));
 
+    // Filter by terms, including a negated one
+    let output = ranger(db_path)
+        .args(["task", "list", "--filter", "frontend -bug"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+    assert!(output.status.success(), "term filter failed: {stderr}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("First task"));
+
+    let output = ranger(db_path)
+        .args(["task", "list", "--filter", "frontend -bug"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(
+        stderr.trim(),
+        "No tasks matching 'frontend -bug' in backlog 'Ranger'."
+    );
+
+    // Creating under a filter adds its positive tags and first state
+    let output = ranger(db_path)
+        .args([
+            "task",
+            "--filter",
+            "project:ranger -bug state:ready",
+            "create",
+            "Filtered task",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+    assert!(output.status.success(), "filtered create failed: {stderr}");
+    let created: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(created["state"], "ready");
+    let output = ranger(db_path)
+        .args(["task", "show", created["key"].as_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let tags: Vec<&str> = detail["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tags, ["project:ranger"]);
+
+    // --state and a state: term conflict, on create and list alike
+    for cmd in [
+        &[
+            "task",
+            "--filter",
+            "state:ready",
+            "create",
+            "--state",
+            "done",
+            "X",
+        ][..],
+        &[
+            "task",
+            "list",
+            "--filter",
+            "-state:done",
+            "--state",
+            "ready",
+        ][..],
+    ] {
+        let output = ranger(db_path).args(cmd).output().unwrap();
+        assert!(!output.status.success(), "{cmd:?} should fail");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("--state can't be combined"), "{stderr}");
+    }
+
+    // An invalid term is an error
+    let output = ranger(db_path)
+        .args(["task", "list", "--filter", "state:someday"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid state: 'someday'"), "{stderr}");
+
     // Filter by tag that no task has
     let output = ranger(db_path)
         .args(["task", "list", "--tag", "nonexistent"])

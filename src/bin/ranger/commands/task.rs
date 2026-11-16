@@ -5,6 +5,7 @@ use clap::{Args, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
 use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::error::RangerError as Error;
+use ranger::filter::Filter;
 use ranger::key;
 use ranger::models::{State, Task};
 use ranger::ops;
@@ -172,7 +173,12 @@ pub async fn default_backlog_id(pool: &SqlitePool) -> Option<i64> {
         .map(|b| b.id)
 }
 
-pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result<(), Error> {
+pub async fn run(
+    pool: &SqlitePool,
+    command: TaskCommands,
+    filter: &Filter,
+    json: bool,
+) -> Result<(), Error> {
     let backlog_scope = default_backlog_id(pool).await;
 
     match command {
@@ -183,6 +189,10 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
             state,
             position,
         } => {
+            if state.is_some() && filter.has_state_term() {
+                return Err(Error::StateConflict);
+            }
+
             let mut tx = pool.begin().await?;
 
             let bl = ops::backlog::get_by_name(&mut tx, &backlog).await?;
@@ -193,11 +203,15 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 ops::task::CreateTask {
                     title: &title,
                     backlog_id: bl.id,
-                    state,
+                    state: state.or_else(|| filter.state().cloned()),
                     description: description.as_deref(),
                 },
             )
             .await?;
+
+            for tag in filter.tags() {
+                ops::tag::add(&mut tx, task.id, &tag.to_string()).await?;
+            }
 
             if let Some(ref anchors) = anchors {
                 ops::task::move_task(&mut tx, &task, anchors.as_placement()).await?;
@@ -221,6 +235,7 @@ pub async fn run(pool: &SqlitePool, command: TaskCommands, json: bool) -> Result
                 state,
                 include_archived: archived,
                 tag,
+                terms: filter.clone(),
             };
 
             if let Some(backlog_name) = &backlog {
@@ -415,6 +430,11 @@ fn empty_task_note(filter: &ListFilter, backlog: Option<&str>) -> String {
     if let Some(tag) = &filter.tag {
         note.push_str(" tagged #");
         note.push_str(tag);
+    }
+    if !filter.terms.0.is_empty() {
+        note.push_str(" matching '");
+        note.push_str(&filter.terms.to_string());
+        note.push('\'');
     }
     if let Some(name) = backlog {
         note.push_str(" in backlog '");
