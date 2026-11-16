@@ -262,11 +262,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_rejects_empty_value() {
+    async fn remove_rejects_invalid_tag() {
         let (pool, task_id, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        assert!(remove(&mut conn, task_id, "x:").await.is_err());
+        assert!(remove(&mut conn, task_id, "state:x").await.is_err());
     }
 
     #[tokio::test]

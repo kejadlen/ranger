@@ -120,20 +120,42 @@ pub struct TagParts<'a> {
     pub value: &'a str,
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("tag '{0}' has no value; add one after the colon, or drop the colon to make a bare tag")]
-pub struct EmptyTagValueError(String);
+/// Why a name can't be a tag. Each rule keeps every tag writable as a filter
+/// term, which splits on whitespace and gives `-` and `state:` meaning.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum InvalidTagError {
+    #[error(
+        "tag '{0}' has no value; add one after the colon, or drop the colon to make a bare tag"
+    )]
+    EmptyValue(String),
+    #[error("tag '{0}' can't contain whitespace, which separates filter terms")]
+    Whitespace(String),
+    #[error("tag '{0}' can't have a key starting with '-', which reads as a negation in filters")]
+    DashKey(String),
+    #[error("tag '{0}' can't use the key 'state', which filters reserve for task state")]
+    StateKey(String),
+}
 
 impl<'a> TryFrom<&'a str> for TagParts<'a> {
-    type Error = EmptyTagValueError;
+    type Error = InvalidTagError;
 
-    /// Rejects a name with nothing after its colon, such as `x:`.
+    /// Rejects a name with nothing after its colon (`x:`), with whitespace,
+    /// with a key starting with `-` (`-a:b`), or with the key `state`.
     fn try_from(name: &'a str) -> Result<Self, Self::Error> {
         let (key, value) = name.split_once(':').unwrap_or(("", name));
-        if value.is_empty() {
-            return Err(EmptyTagValueError(name.to_string()));
-        }
-        Ok(TagParts { key, value })
+        let parts = TagParts { key, value };
+        let err = if parts.value.is_empty() {
+            InvalidTagError::EmptyValue
+        } else if name.chars().any(char::is_whitespace) {
+            InvalidTagError::Whitespace
+        } else if parts.key.starts_with('-') {
+            InvalidTagError::DashKey
+        } else if parts.key == "state" {
+            InvalidTagError::StateKey
+        } else {
+            return Ok(parts);
+        };
+        Err(err(name.to_string()))
     }
 }
 
@@ -168,7 +190,14 @@ mod tests {
 
     #[hegel::test]
     fn prop_tag_parts_split_and_rejoin(tc: TestCase) {
-        let name = tc.draw(gs::text().max_size(20));
+        // Mix arbitrary text with the fragments the rules care about.
+        let fragments = ["a", "é", "-", ":", " ", "\t", "state"];
+        let name = if tc.draw(gs::booleans()) {
+            tc.draw(gs::text().max_size(20))
+        } else {
+            tc.draw(gs::vecs(gs::sampled_from(fragments.to_vec())).max_size(6))
+                .concat()
+        };
         match TagParts::try_from(name.as_str()) {
             Ok(parts) => {
                 assert!(!parts.value.is_empty());
@@ -179,11 +208,45 @@ mod tests {
                 assert_eq!(TagParts::try_from(canonical.as_str()).unwrap(), parts);
                 assert!(canonical == name || format!(":{canonical}") == name);
             }
-            Err(_) => assert!(
-                name.split_once(':')
-                    .map_or(name.as_str(), |(_, v)| v)
-                    .is_empty()
-            ),
+            Err(_) => {
+                // Rejected only for a reason the rules name.
+                let (key, value) = name.split_once(':').unwrap_or(("", &name));
+                let reasons = [
+                    value.is_empty(),
+                    name.chars().any(char::is_whitespace),
+                    key.starts_with('-'),
+                    key == "state",
+                ];
+                assert!(reasons.contains(&true), "{name:?} rejected for no reason");
+            }
+        }
+    }
+
+    /// Every valid tag can be written as a positive and a negated filter
+    /// term that both match it.
+    #[hegel::test]
+    fn prop_valid_tags_are_writable_as_terms(tc: TestCase) {
+        use crate::filter::{Matcher, Term};
+
+        let name = tc.draw(gs::text().alphabet("ab-:é_ s").max_size(8));
+        let Ok(parts) = TagParts::try_from(name.as_str()) else {
+            return;
+        };
+        let matcher = Matcher::Tag {
+            key: parts.key.to_string(),
+            value: parts.value.to_string(),
+        };
+        for negated in [false, true] {
+            let term = Term {
+                negated,
+                matcher: matcher.clone(),
+            };
+            let written = term.to_string();
+            assert_eq!(
+                written.parse::<Term>().unwrap(),
+                term,
+                "{name:?} as {written:?}"
+            );
         }
     }
 
@@ -191,6 +254,8 @@ mod tests {
     fn prop_tag_parts_roundtrip_from_parts(tc: TestCase) {
         let key = tc.draw(gs::text().max_size(10).exclude_characters(":"));
         let value = tc.draw(gs::text().min_size(1).max_size(10));
+        tc.assume(!format!("{key}{value}").chars().any(char::is_whitespace));
+        tc.assume(!key.starts_with('-') && key != "state");
         let parts = TagParts {
             key: &key,
             value: &value,
@@ -221,6 +286,27 @@ mod tests {
 
     fn parts<'a>(key: &'a str, value: &'a str) -> TagParts<'a> {
         TagParts { key, value }
+    }
+
+    #[test]
+    fn tag_parts_reject_unwritable_tags() {
+        for (name, err) in [
+            ("a b", InvalidTagError::Whitespace("a b".into())),
+            ("x:\ty", InvalidTagError::Whitespace("x:\ty".into())),
+            ("-a:b", InvalidTagError::DashKey("-a:b".into())),
+            ("state:x", InvalidTagError::StateKey("state:x".into())),
+        ] {
+            assert_eq!(TagParts::try_from(name).unwrap_err(), err, "{name:?}");
+        }
+        assert_eq!(
+            TagParts::try_from("-state:x").unwrap_err().to_string(),
+            "tag '-state:x' can't have a key starting with '-', which reads as a negation in filters"
+        );
+        // A bare tag may start with `-`; it's written as `:-x` in filters.
+        assert_eq!(TagParts::try_from("-x").unwrap(), parts("", "-x"));
+        // `state` is fine as a bare tag or a value.
+        assert!(TagParts::try_from("state").is_ok());
+        assert!(TagParts::try_from("kind:state").is_ok());
     }
 
     #[test]

@@ -8,7 +8,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::models::{EmptyTagValueError, InvalidStateError, State, TagParts};
+use crate::models::{InvalidStateError, InvalidTagError, State, TagParts};
 
 /// What a single term matches, before negation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +67,7 @@ pub enum FilterError {
     #[error(transparent)]
     InvalidState(#[from] InvalidStateError),
     #[error(transparent)]
-    EmptyTagValue(#[from] EmptyTagValueError),
+    InvalidTag(#[from] InvalidTagError),
 }
 
 impl FromStr for Term {
@@ -194,10 +194,8 @@ mod tests {
                 Matcher::State(tc.draw(gs::sampled_from(STATES.to_vec())))
             } else {
                 let key = tc.draw(key());
-                // Not every tag can be written as a term: a `state` key reads
-                // as a state term, and a positive term with a key starting
-                // with `-` reads as a negation.
-                tc.assume(key != "state" && (negated || !key.starts_with('-')));
+                // Tags can't have these keys; see `TagParts::try_from`.
+                tc.assume(key != "state" && !key.starts_with('-'));
                 Matcher::Tag {
                     key,
                     value: tc.draw(value()),
@@ -265,7 +263,7 @@ mod tests {
     #[test]
     fn rejects_empty_tag_value() {
         let err = "-x:".parse::<Filter>().unwrap_err();
-        assert!(matches!(err, FilterError::EmptyTagValue(_)));
+        assert!(matches!(err, FilterError::InvalidTag(_)));
     }
 
     #[test]
@@ -295,6 +293,10 @@ mod tests {
         assert_eq!("::-:".parse::<Term>().unwrap().to_string(), "::-:");
         assert_eq!(":-:".parse::<Term>().unwrap().to_string(), ":-:");
         assert_eq!("--x".parse::<Term>().unwrap().to_string(), "--x");
-        assert_eq!("--a:b".parse::<Term>().unwrap().to_string(), "--a:b");
+        // Tags can't have a key starting with `-`, so neither can terms.
+        assert!(matches!(
+            "--a:b".parse::<Term>(),
+            Err(FilterError::InvalidTag(_))
+        ));
     }
 }
