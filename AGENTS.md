@@ -36,6 +36,7 @@ src/
 ├── ops/                 # CRUD operations per model
 └── bin/ranger/          # CLI binary
     ├── main.rs          # Entrypoint, clap setup, DB path resolution
+    ├── app.rs           # `Ranger`: pool and resolved settings passed to every command
     ├── output.rs        # Human/JSON output helpers
     └── commands/        # One module per subcommand group
 migrations/              # SQL schema
