@@ -26,6 +26,11 @@ struct Cli {
     #[arg(long, env = "RANGER_DB", global = true)]
     db: Option<PathBuf>,
 
+    /// The default backlog. Task keys resolve within it first, and a bare
+    /// `ranger` shows it. Normally set through the env var.
+    #[arg(long, env = "RANGER_DEFAULT_BACKLOG", global = true, hide = true)]
+    default_backlog: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -44,7 +49,8 @@ enum Commands {
         /// Space-separated filter terms: `bug` or `key:value` for a tag,
         /// `state:<state>` for a state, and a leading `-` to negate. `list`
         /// shows only tasks matching every term; `create` adds the positive
-        /// tags and takes the first positive state. Key lookup ignores it.
+        /// tags and takes the first positive state. Task keys resolve among
+        /// the matching tasks first.
         /// Example: --filter "project:ranger -bug"
         #[arg(long, global = true, allow_hyphen_values = true)]
         filter: Option<ranger::filter::Filter>,
@@ -107,35 +113,39 @@ async fn async_main() -> miette::Result<()> {
     let db_path = resolve_db_path(cli.db);
     let pool = ranger::db::connect(&db_path).await?;
 
+    let default_backlog = cli.default_backlog.as_deref();
+
     match cli.command {
         Some(Commands::Backlog { command }) => {
-            commands::backlog::run(&pool, command, cli.json).await?;
+            commands::backlog::run(&pool, command, default_backlog, cli.json).await?;
         }
         Some(Commands::Task { filter, command }) => {
             let filter = filter.unwrap_or_default();
-            commands::task::run(&pool, command, &filter, cli.json).await?;
+            commands::task::run(&pool, command, &filter, default_backlog, cli.json).await?;
         }
         Some(Commands::Comment { command }) => {
-            commands::comment::run(&pool, command, cli.json).await?;
+            commands::comment::run(&pool, command, default_backlog, cli.json).await?;
         }
         Some(Commands::Tag { command }) => {
-            commands::tag::run(&pool, command, cli.json).await?;
+            commands::tag::run(&pool, command, default_backlog, cli.json).await?;
         }
         Some(Commands::Serve { port, backlog }) => {
             commands::serve::run(&pool, port, backlog).await?;
         }
         None => {
             // No subcommand: show the default backlog
-            let backlog_name = std::env::var("RANGER_DEFAULT_BACKLOG").ok();
-            match backlog_name {
+            match default_backlog {
                 Some(name) => {
-                    let show_cmd = commands::backlog::BacklogCommands::Show { name, done: false };
-                    commands::backlog::run(&pool, show_cmd, cli.json).await?;
+                    let show_cmd = commands::backlog::BacklogCommands::Show {
+                        name: name.to_string(),
+                        done: false,
+                    };
+                    commands::backlog::run(&pool, show_cmd, default_backlog, cli.json).await?;
                 }
                 None => {
                     // No default backlog set — list all backlogs
                     let list_cmd = commands::backlog::BacklogCommands::List;
-                    commands::backlog::run(&pool, list_cmd, cli.json).await?;
+                    commands::backlog::run(&pool, list_cmd, default_backlog, cli.json).await?;
                 }
             }
         }

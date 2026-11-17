@@ -30,6 +30,7 @@ pub enum CommentCommands {
 pub async fn run(
     pool: &SqlitePool,
     command: CommentCommands,
+    default_backlog: Option<&str>,
     json: bool,
 ) -> Result<(), RangerError> {
     let mut conn = pool.acquire().await?;
@@ -39,7 +40,7 @@ pub async fn run(
             let t = ops::task::get_by_key_prefix(
                 &mut conn,
                 &task,
-                &super::key_scope(&Default::default()),
+                &super::key_scope(default_backlog, &Default::default()),
             )
             .await?;
             let comment = ops::comment::add(&mut conn, t.id, &body).await?;
@@ -51,7 +52,7 @@ pub async fn run(
             let t = ops::task::get_by_key_prefix(
                 &mut conn,
                 &task,
-                &super::key_scope(&Default::default()),
+                &super::key_scope(default_backlog, &Default::default()),
             )
             .await?;
             let comments = ops::comment::list(&mut conn, t.id).await?;

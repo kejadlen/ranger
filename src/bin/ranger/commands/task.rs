@@ -165,9 +165,10 @@ pub async fn run(
     pool: &SqlitePool,
     command: TaskCommands,
     filter: &Filter,
+    default_backlog: Option<&str>,
     json: bool,
 ) -> Result<(), Error> {
-    let scope = super::key_scope(filter);
+    let scope = super::key_scope(default_backlog, filter);
 
     match command {
         TaskCommands::Create {

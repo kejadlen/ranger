@@ -52,6 +52,7 @@ pub enum BacklogCommands {
 pub async fn run(
     pool: &SqlitePool,
     command: BacklogCommands,
+    default_backlog: Option<&str>,
     json: bool,
 ) -> Result<(), RangerError> {
     let mut conn = pool.acquire().await?;
@@ -122,7 +123,7 @@ pub async fn run(
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let scope = super::key_scope(&Default::default());
+                let scope = super::key_scope(default_backlog, &Default::default());
                 let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
 
                 print_backlog_detail(&backlog);
