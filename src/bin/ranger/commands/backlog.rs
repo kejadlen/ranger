@@ -2,6 +2,7 @@ use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 use ranger::db::SqlitePool;
 use ranger::error::RangerError;
+use ranger::filter::Filter;
 use ranger::models::{Backlog, State};
 use ranger::ops;
 use ranger::ops::task::ListFilter;
@@ -109,9 +110,10 @@ pub async fn run(
                 for state in &states {
                     let filter = ListFilter {
                         state: Some(state.clone()),
+                        terms: Filter(vec![ops::backlog::project_term(&backlog.name)?]),
                         ..Default::default()
                     };
-                    let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
+                    let tasks = ops::task::list(&mut conn, &filter).await?;
                     if !tasks.is_empty() {
                         state_groups
                             .insert(state.to_string(), serde_json::to_value(&tasks).unwrap());
@@ -131,9 +133,10 @@ pub async fn run(
                 for state in &states {
                     let filter = ListFilter {
                         state: Some(state.clone()),
+                        terms: Filter(vec![ops::backlog::project_term(&backlog.name)?]),
                         ..Default::default()
                     };
-                    let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
+                    let tasks = ops::task::list(&mut conn, &filter).await?;
                     if !tasks.is_empty() {
                         println!("\n[{}]", state);
                         for t in &tasks {

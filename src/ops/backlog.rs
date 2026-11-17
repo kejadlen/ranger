@@ -1,4 +1,5 @@
 use crate::error::RangerError;
+use crate::filter::{Matcher, Term};
 use crate::models::{Backlog, TagParts};
 use sqlx::sqlite::SqliteConnection;
 
@@ -6,6 +7,19 @@ use sqlx::sqlite::SqliteConnection;
 /// carries it.
 pub fn project_tag(name: &str) -> String {
     format!("project:{name}")
+}
+
+/// The filter term matching a backlog's tasks, through its `project:` tag.
+pub fn project_term(name: &str) -> Result<Term, RangerError> {
+    let tag = project_tag(name);
+    let parts = TagParts::try_from(tag.as_str())?;
+    Ok(Term {
+        negated: false,
+        matcher: Matcher::Tag {
+            key: parts.key.to_string(),
+            value: parts.value.to_string(),
+        },
+    })
 }
 
 /// Create a backlog. Its name must work as the value of its `project:` tag.
