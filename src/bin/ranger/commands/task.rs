@@ -72,9 +72,6 @@ pub enum TaskCommands {
     Create {
         /// Task title
         title: String,
-        /// Backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        backlog: String,
         /// Task description
         #[arg(long)]
         description: Option<String>,
@@ -87,9 +84,6 @@ pub enum TaskCommands {
     /// List tasks
     #[command(visible_alias = "ls")]
     List {
-        /// Filter by backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        backlog: Option<String>,
         /// Filter by state
         #[arg(long)]
         state: Option<State>,
@@ -165,15 +159,14 @@ pub async fn run(
     pool: &SqlitePool,
     command: TaskCommands,
     filter: &Filter,
-    default_backlog: Option<&str>,
+    backlog: Option<&str>,
     json: bool,
 ) -> Result<(), Error> {
-    let scope = super::key_scope(default_backlog, filter);
+    let scope = super::key_scope(backlog, filter);
 
     match command {
         TaskCommands::Create {
             title,
-            backlog,
             description,
             state,
             position,
@@ -184,7 +177,10 @@ pub async fn run(
 
             let mut tx = pool.begin().await?;
 
-            let bl = ops::backlog::get_by_name(&mut tx, &backlog).await?;
+            let backlog = backlog.ok_or_else(|| {
+                Error::Usage("task create needs --backlog or RANGER_DEFAULT_BACKLOG".to_string())
+            })?;
+            let bl = ops::backlog::get_by_name(&mut tx, backlog).await?;
             let anchors = position.resolve(&mut tx, &scope).await?;
 
             let task = ops::task::create(
@@ -213,7 +209,6 @@ pub async fn run(
             output::print(&task, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::List {
-            backlog,
             state,
             tag,
             archived,
@@ -226,7 +221,7 @@ pub async fn run(
                 terms: filter.clone(),
             };
 
-            if let Some(backlog_name) = &backlog {
+            if let Some(backlog_name) = backlog {
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
                 let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
                 let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
