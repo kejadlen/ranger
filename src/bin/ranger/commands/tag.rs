@@ -1,9 +1,8 @@
 use clap::Subcommand;
-use ranger::db::SqlitePool;
+use ranger::db::{SqliteConnection, SqlitePool};
 use ranger::error::RangerError;
 use ranger::ops;
 
-use super::task::default_backlog_id;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -38,20 +37,34 @@ pub enum TagCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<(), RangerError> {
-    let backlog_scope = default_backlog_id(pool).await;
+/// The ID of the default backlog, whose tags `tag list` shows. `None` when
+/// there's no default or the backlog doesn't exist.
+async fn backlog_id(conn: &mut SqliteConnection, name: Option<&str>) -> Option<i64> {
+    ops::backlog::get_by_name(conn, name?)
+        .await
+        .ok()
+        .map(|b| b.id)
+}
+
+pub async fn run(
+    pool: &SqlitePool,
+    command: TagCommands,
+    backlog: Option<&str>,
+    json: bool,
+) -> Result<(), RangerError> {
     let mut conn = pool.acquire().await?;
+    let scope = super::key_scope(backlog, &Default::default());
 
     match command {
         TagCommands::Add { task, tag } => {
-            let t = ops::task::get_by_key_prefix(&mut conn, &task, backlog_scope).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task, &scope).await?;
             let created = ops::tag::add(&mut conn, t.id, &tag).await?;
             output::print(&created, json, |tg| {
                 println!("Tagged {} with {}", task, tg.name)
             });
         }
         TagCommands::Remove { task, tag } => {
-            let t = ops::task::get_by_key_prefix(&mut conn, &task, backlog_scope).await?;
+            let t = ops::task::get_by_key_prefix(&mut conn, &task, &scope).await?;
             ops::tag::remove(&mut conn, t.id, &tag).await?;
             if !json {
                 println!("Removed tag {} from {}", tag, task);
@@ -60,7 +73,7 @@ pub async fn run(pool: &SqlitePool, command: TagCommands, json: bool) -> Result<
         TagCommands::List { all } => {
             let tags = if all {
                 ops::tag::list_all(&mut conn).await?
-            } else if let Some(bl_id) = backlog_scope {
+            } else if let Some(bl_id) = backlog_id(&mut conn, backlog).await {
                 ops::tag::list_for_backlog(&mut conn, bl_id).await?
             } else {
                 ops::tag::list_all(&mut conn).await?

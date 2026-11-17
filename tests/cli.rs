@@ -912,3 +912,82 @@ fn empty_lists_other_commands() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["project:Ranger"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn keys_resolve_outside_the_default_backlog() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+
+    for name in ["Ranger", "Other"] {
+        ranger(db_path)
+            .args(["backlog", "create", name])
+            .assert()
+            .success();
+    }
+    let output = ranger(db_path)
+        .args([
+            "task",
+            "create",
+            "Elsewhere",
+            "--backlog",
+            "Other",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let task: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let key = task["key"].as_str().unwrap();
+
+    // RANGER_DEFAULT_BACKLOG is Ranger, but the key still resolves.
+    ranger(db_path)
+        .args(["task", "edit", key, "--title", "Found"])
+        .assert()
+        .success();
+    ranger(db_path)
+        .args(["comment", "add", key, "hello"])
+        .assert()
+        .success();
+    let detail = task_detail(db_path, key);
+    assert_eq!(detail["task"]["title"], "Found");
+}
+
+#[test]
+fn create_needs_a_backlog() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let output = ranger(db.to_str().unwrap())
+        .env_remove("RANGER_DEFAULT_BACKLOG")
+        .args(["task", "create", "Homeless"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("task create needs --backlog or RANGER_DEFAULT_BACKLOG")
+    );
+}
+
+#[test]
+fn backlog_flag_works_before_the_subcommand() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+    ranger(db_path)
+        .args(["backlog", "create", "Other"])
+        .assert()
+        .success();
+    ranger(db_path)
+        .args(["--backlog", "Other", "task", "create", "Here"])
+        .assert()
+        .success();
+    let output = ranger(db_path)
+        .args(["task", "list", "--backlog", "Other", "--json"])
+        .output()
+        .unwrap();
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(tasks[0]["title"], "Here");
+}
