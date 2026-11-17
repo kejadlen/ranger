@@ -27,10 +27,11 @@ struct Cli {
     #[arg(long, env = "RANGER_DB", global = true)]
     db: Option<PathBuf>,
 
-    /// The default backlog. Task keys resolve within it first, and a bare
-    /// `ranger` shows it. Normally set through the env var.
-    #[arg(long, env = "RANGER_DEFAULT_BACKLOG", global = true, hide = true)]
-    default_backlog: Option<String>,
+    /// Backlog to work in. `task create` adds tasks to it, `task list`
+    /// lists it, task keys resolve within it first, and a bare `ranger`
+    /// shows it.
+    #[arg(long, env = "RANGER_DEFAULT_BACKLOG", global = true, add = ArgValueCompleter::new(completions::complete_backlog_names))]
+    backlog: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -75,9 +76,6 @@ enum Commands {
         /// Port to listen on
         #[arg(long, default_value_t = 3000)]
         port: u16,
-        /// Default backlog to display
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        backlog: Option<String>,
     },
 }
 
@@ -114,7 +112,7 @@ async fn async_main() -> miette::Result<()> {
     let db_path = resolve_db_path(cli.db);
     let ranger = app::Ranger {
         pool: ranger::db::connect(&db_path).await?,
-        default_backlog: cli.default_backlog,
+        backlog: cli.backlog,
         json: cli.json,
         editor: std::env::var("EDITOR").ok(),
     };
@@ -133,12 +131,12 @@ async fn async_main() -> miette::Result<()> {
         Some(Commands::Tag { command }) => {
             commands::tag::run(&ranger, command).await?;
         }
-        Some(Commands::Serve { port, backlog }) => {
-            commands::serve::run(&ranger, port, backlog).await?;
+        Some(Commands::Serve { port }) => {
+            commands::serve::run(&ranger, port).await?;
         }
         None => {
             // No subcommand: show the default backlog, or list them all
-            let command = match &ranger.default_backlog {
+            let command = match &ranger.backlog {
                 Some(name) => commands::backlog::BacklogCommands::Show {
                     name: name.clone(),
                     done: false,

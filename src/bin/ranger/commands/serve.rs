@@ -26,14 +26,10 @@ struct AppState {
     default_backlog: Option<String>,
 }
 
-pub async fn run(
-    ranger: &Ranger,
-    port: u16,
-    default_backlog: Option<String>,
-) -> Result<(), ranger::error::RangerError> {
+pub async fn run(ranger: &Ranger, port: u16) -> Result<(), ranger::error::RangerError> {
     let state = AppState {
         pool: ranger.pool.clone(),
-        default_backlog,
+        default_backlog: ranger.backlog.clone(),
     };
 
     let app = Router::new()

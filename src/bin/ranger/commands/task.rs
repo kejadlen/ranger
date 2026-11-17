@@ -73,9 +73,6 @@ pub enum TaskCommands {
     Create {
         /// Task title
         title: String,
-        /// Backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        backlog: String,
         /// Task description
         #[arg(long)]
         description: Option<String>,
@@ -88,9 +85,6 @@ pub enum TaskCommands {
     /// List tasks
     #[command(visible_alias = "ls")]
     List {
-        /// Filter by backlog name
-        #[arg(long, env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        backlog: Option<String>,
         /// Filter by state
         #[arg(long)]
         state: Option<State>,
@@ -170,7 +164,6 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
     match command {
         TaskCommands::Create {
             title,
-            backlog,
             description,
             state,
             position,
@@ -181,7 +174,10 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
 
             let mut tx = pool.begin().await?;
 
-            let bl = ops::backlog::get_by_name(&mut tx, &backlog).await?;
+            let backlog = ranger.backlog.as_deref().ok_or_else(|| {
+                Error::Usage("task create needs --backlog or RANGER_DEFAULT_BACKLOG".to_string())
+            })?;
+            let bl = ops::backlog::get_by_name(&mut tx, backlog).await?;
             let anchors = position.resolve(&mut tx, &scope).await?;
 
             let task = ops::task::create(
@@ -210,7 +206,6 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
             output::print(&task, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::List {
-            backlog,
             state,
             tag,
             archived,
@@ -223,7 +218,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
                 terms: filter.clone(),
             };
 
-            if let Some(backlog_name) = &backlog {
+            if let Some(backlog_name) = ranger.backlog.as_deref() {
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
                 let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
                 let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;

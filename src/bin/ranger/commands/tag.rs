@@ -40,7 +40,7 @@ pub enum TagCommands {
 
 /// The ID of the default backlog, whose tags `tag list` shows. `None` when
 /// there's no default or the backlog doesn't exist.
-async fn default_backlog_id(conn: &mut SqliteConnection, name: Option<&str>) -> Option<i64> {
+async fn backlog_id(conn: &mut SqliteConnection, name: Option<&str>) -> Option<i64> {
     ops::backlog::get_by_name(conn, name?)
         .await
         .ok()
@@ -69,9 +69,7 @@ pub async fn run(ranger: &Ranger, command: TagCommands) -> Result<(), RangerErro
         TagCommands::List { all } => {
             let tags = if all {
                 ops::tag::list_all(&mut conn).await?
-            } else if let Some(bl_id) =
-                default_backlog_id(&mut conn, ranger.default_backlog.as_deref()).await
-            {
+            } else if let Some(bl_id) = backlog_id(&mut conn, ranger.backlog.as_deref()).await {
                 ops::tag::list_for_backlog(&mut conn, bl_id).await?
             } else {
                 ops::tag::list_all(&mut conn).await?

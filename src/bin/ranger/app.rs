@@ -7,8 +7,9 @@ use ranger::models::TagParts;
 /// here instead of taking them as separate arguments or reading env vars.
 pub struct Ranger {
     pub pool: SqlitePool,
-    /// The default backlog. Task keys resolve within it first.
-    pub default_backlog: Option<String>,
+    /// The backlog from `--backlog`/`RANGER_DEFAULT_BACKLOG`. Task keys
+    /// resolve within it first.
+    pub backlog: Option<String>,
     /// Print JSON instead of human-readable output.
     pub json: bool,
     /// `$EDITOR`, for `task edit` with no field flags.
@@ -16,16 +17,16 @@ pub struct Ranger {
 }
 
 impl Ranger {
-    /// The tasks a key resolves against first: those in the default backlog,
+    /// The tasks a key resolves against first: those in the backlog,
     /// narrowed by `filter`. Keys outside it still resolve when nothing inside
     /// matches; see `ops::task::get_by_key_prefix`.
     pub fn key_scope(&self, filter: &Filter) -> Filter {
-        key_scope(self.default_backlog.as_deref(), filter)
+        key_scope(self.backlog.as_deref(), filter)
     }
 }
 
-fn key_scope(default_backlog: Option<&str>, filter: &Filter) -> Filter {
-    let backlog_term = default_backlog.and_then(|name| {
+fn key_scope(backlog: Option<&str>, filter: &Filter) -> Filter {
+    let backlog_term = backlog.and_then(|name| {
         let tag = ranger::ops::backlog::project_tag(name);
         let parts = TagParts::try_from(tag.as_str()).ok()?;
         Some(Term {
@@ -54,7 +55,7 @@ mod tests {
         gs::text().alphabet("ab-:é_ ").max_size(6)
     }
 
-    /// The scope is the filter's own terms, led by the default backlog's
+    /// The scope is the filter's own terms, led by the backlog's
     /// `project:` tag when there is one that can be written as a tag.
     #[hegel::test]
     fn prop_key_scope_prepends_backlog_term(tc: TestCase) {
