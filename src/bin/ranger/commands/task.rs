@@ -3,13 +3,14 @@ use std::io::Write;
 
 use clap::{Args, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
-use ranger::db::{SqliteConnection, SqlitePool};
+use ranger::db::SqliteConnection;
 use ranger::error::RangerError as Error;
 use ranger::filter::Filter;
 use ranger::models::{State, Task};
 use ranger::ops;
 use ranger::ops::task::{ListFilter, Placement};
 
+use crate::app::Ranger;
 use crate::completions;
 use crate::output;
 
@@ -155,14 +156,10 @@ pub enum TaskCommands {
     },
 }
 
-pub async fn run(
-    pool: &SqlitePool,
-    command: TaskCommands,
-    filter: &Filter,
-    backlog: Option<&str>,
-    json: bool,
-) -> Result<(), Error> {
-    let scope = super::key_scope(backlog, filter);
+pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Result<(), Error> {
+    let pool = &ranger.pool;
+    let json = ranger.json;
+    let scope = ranger.key_scope(filter);
 
     match command {
         TaskCommands::Create {
@@ -177,7 +174,7 @@ pub async fn run(
 
             let mut tx = pool.begin().await?;
 
-            let backlog = backlog.ok_or_else(|| {
+            let backlog = ranger.backlog.as_deref().ok_or_else(|| {
                 Error::Usage("task create needs --backlog or RANGER_DEFAULT_BACKLOG".to_string())
             })?;
             let bl = ops::backlog::get_by_name(&mut tx, backlog).await?;
@@ -221,7 +218,7 @@ pub async fn run(
                 terms: filter.clone(),
             };
 
-            if let Some(backlog_name) = backlog {
+            if let Some(backlog_name) = ranger.backlog.as_deref() {
                 let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
                 let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
                 let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
@@ -290,7 +287,7 @@ pub async fn run(
                 && position.before.is_none()
                 && position.after.is_none()
             {
-                edit_in_editor(&mut conn, &task).await?
+                edit_in_editor(&mut conn, ranger.editor.as_deref(), &task).await?
             } else {
                 let anchors = position.resolve(&mut conn, &scope).await?;
                 let updated = ops::task::edit(
@@ -447,9 +444,13 @@ fn print_task_detail(t: &Task, prefixes: &HashMap<String, usize>) {
 }
 
 /// Open $EDITOR with the task fields, apply changes on save.
-async fn edit_in_editor(conn: &mut SqliteConnection, task: &Task) -> Result<Task, Error> {
-    let editor = std::env::var("EDITOR")
-        .map_err(|_| Error::Usage("EDITOR environment variable not set".into()))?;
+async fn edit_in_editor(
+    conn: &mut SqliteConnection,
+    editor: Option<&str>,
+    task: &Task,
+) -> Result<Task, Error> {
+    let editor =
+        editor.ok_or_else(|| Error::Usage("EDITOR environment variable not set".into()))?;
 
     let mut tmp = tempfile::Builder::new().prefix("ranger-edit-").tempfile()?;
 
@@ -461,7 +462,7 @@ async fn edit_in_editor(conn: &mut SqliteConnection, task: &Task) -> Result<Task
     tmp.flush()?;
 
     // Open editor and wait for it to finish.
-    let status = std::process::Command::new(&editor)
+    let status = std::process::Command::new(editor)
         .arg(tmp.path())
         .status()?;
 

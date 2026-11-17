@@ -1,9 +1,9 @@
 use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
-use ranger::db::SqlitePool;
 use ranger::error::RangerError;
 use ranger::ops;
 
+use crate::app::Ranger;
 use crate::completions;
 use crate::output;
 
@@ -27,24 +27,19 @@ pub enum CommentCommands {
     },
 }
 
-pub async fn run(
-    pool: &SqlitePool,
-    command: CommentCommands,
-    backlog: Option<&str>,
-    json: bool,
-) -> Result<(), RangerError> {
-    let mut conn = pool.acquire().await?;
+pub async fn run(ranger: &Ranger, command: CommentCommands) -> Result<(), RangerError> {
+    let mut conn = ranger.pool.acquire().await?;
 
     match command {
         CommentCommands::Add { task, body } => {
             let t = ops::task::get_by_key_prefix(
                 &mut conn,
                 &task,
-                &super::key_scope(backlog, &Default::default()),
+                &ranger.key_scope(&Default::default()),
             )
             .await?;
             let comment = ops::comment::add(&mut conn, t.id, &body).await?;
-            output::print(&comment, json, |c| {
+            output::print(&comment, ranger.json, |c| {
                 println!("[{}] {}", c.created_at, c.body);
             });
         }
@@ -52,12 +47,12 @@ pub async fn run(
             let t = ops::task::get_by_key_prefix(
                 &mut conn,
                 &task,
-                &super::key_scope(backlog, &Default::default()),
+                &ranger.key_scope(&Default::default()),
             )
             .await?;
             let comments = ops::comment::list(&mut conn, t.id).await?;
             let note = format!("No comments on task {}.", t.key);
-            output::print_list(&comments, json, &note, |c| {
+            output::print_list(&comments, ranger.json, &note, |c| {
                 println!("[{}] {}", c.created_at, c.body);
             });
         }

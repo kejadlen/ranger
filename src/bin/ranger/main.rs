@@ -1,3 +1,4 @@
+mod app;
 mod commands;
 mod completions;
 mod output;
@@ -109,43 +110,40 @@ async fn async_main() -> miette::Result<()> {
     let cli = Cli::parse();
     output::init_color(cli.color);
     let db_path = resolve_db_path(cli.db);
-    let pool = ranger::db::connect(&db_path).await?;
-
-    let backlog = cli.backlog.as_deref();
+    let ranger = app::Ranger {
+        pool: ranger::db::connect(&db_path).await?,
+        backlog: cli.backlog,
+        json: cli.json,
+        editor: std::env::var("EDITOR").ok(),
+    };
 
     match cli.command {
         Some(Commands::Backlog { command }) => {
-            commands::backlog::run(&pool, command, backlog, cli.json).await?;
+            commands::backlog::run(&ranger, command).await?;
         }
         Some(Commands::Task { filter, command }) => {
             let filter = filter.unwrap_or_default();
-            commands::task::run(&pool, command, &filter, backlog, cli.json).await?;
+            commands::task::run(&ranger, command, &filter).await?;
         }
         Some(Commands::Comment { command }) => {
-            commands::comment::run(&pool, command, backlog, cli.json).await?;
+            commands::comment::run(&ranger, command).await?;
         }
         Some(Commands::Tag { command }) => {
-            commands::tag::run(&pool, command, backlog, cli.json).await?;
+            commands::tag::run(&ranger, command).await?;
         }
         Some(Commands::Serve { port }) => {
-            commands::serve::run(&pool, port, cli.backlog).await?;
+            commands::serve::run(&ranger, port).await?;
         }
         None => {
-            // No subcommand: show the default backlog
-            match backlog {
-                Some(name) => {
-                    let show_cmd = commands::backlog::BacklogCommands::Show {
-                        name: name.to_string(),
-                        done: false,
-                    };
-                    commands::backlog::run(&pool, show_cmd, backlog, cli.json).await?;
-                }
-                None => {
-                    // No default backlog set — list all backlogs
-                    let list_cmd = commands::backlog::BacklogCommands::List;
-                    commands::backlog::run(&pool, list_cmd, backlog, cli.json).await?;
-                }
-            }
+            // No subcommand: show the default backlog, or list them all
+            let command = match &ranger.backlog {
+                Some(name) => commands::backlog::BacklogCommands::Show {
+                    name: name.clone(),
+                    done: false,
+                },
+                None => commands::backlog::BacklogCommands::List,
+            };
+            commands::backlog::run(&ranger, command).await?;
         }
     }
 
