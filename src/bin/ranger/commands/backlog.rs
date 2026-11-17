@@ -1,11 +1,11 @@
 use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
-use ranger::db::SqlitePool;
 use ranger::error::RangerError;
 use ranger::models::{Backlog, State};
 use ranger::ops;
 use ranger::ops::task::ListFilter;
 
+use crate::app::Ranger;
 use crate::completions;
 use crate::output;
 
@@ -49,22 +49,17 @@ pub enum BacklogCommands {
     },
 }
 
-pub async fn run(
-    pool: &SqlitePool,
-    command: BacklogCommands,
-    default_backlog: Option<&str>,
-    json: bool,
-) -> Result<(), RangerError> {
-    let mut conn = pool.acquire().await?;
+pub async fn run(ranger: &Ranger, command: BacklogCommands) -> Result<(), RangerError> {
+    let mut conn = ranger.pool.acquire().await?;
 
     match command {
         BacklogCommands::Create { name } => {
             let backlog = ops::backlog::create(&mut conn, &name).await?;
-            output::print(&backlog, json, print_backlog);
+            output::print(&backlog, ranger.json, print_backlog);
         }
         BacklogCommands::List => {
             let backlogs = ops::backlog::list(&mut conn).await?;
-            output::print_list(&backlogs, json, "No backlogs.", print_backlog);
+            output::print_list(&backlogs, ranger.json, "No backlogs.", print_backlog);
         }
         BacklogCommands::Delete { name, yes } => {
             if !yes {
@@ -83,12 +78,14 @@ pub async fn run(
                 }
             }
             let backlog = ops::backlog::delete(&mut conn, &name).await?;
-            output::print(&backlog, json, |b| println!("Deleted backlog: {}", b.name));
+            output::print(&backlog, ranger.json, |b| {
+                println!("Deleted backlog: {}", b.name)
+            });
         }
         BacklogCommands::Rebalance { name } => {
             let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;
             let count = ops::task::rebalance(&mut conn, backlog.id).await?;
-            if json {
+            if ranger.json {
                 let value = serde_json::json!({ "backlog": name, "rebalanced": count });
                 println!("{}", serde_json::to_string_pretty(&value).unwrap());
             } else {
@@ -104,7 +101,7 @@ pub async fn run(
                 vec![State::InProgress, State::Ready, State::Icebox]
             };
 
-            if json {
+            if ranger.json {
                 let mut state_groups = serde_json::Map::new();
                 for state in &states {
                     let filter = ListFilter {
@@ -123,7 +120,7 @@ pub async fn run(
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let scope = super::key_scope(default_backlog, &Default::default());
+                let scope = ranger.key_scope(&Default::default());
                 let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
 
                 print_backlog_detail(&backlog);

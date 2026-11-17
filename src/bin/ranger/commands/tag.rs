@@ -1,8 +1,9 @@
 use clap::Subcommand;
-use ranger::db::{SqliteConnection, SqlitePool};
+use ranger::db::SqliteConnection;
 use ranger::error::RangerError;
 use ranger::ops;
 
+use crate::app::Ranger;
 use crate::output;
 
 #[derive(Subcommand)]
@@ -46,44 +47,41 @@ async fn default_backlog_id(conn: &mut SqliteConnection, name: Option<&str>) -> 
         .map(|b| b.id)
 }
 
-pub async fn run(
-    pool: &SqlitePool,
-    command: TagCommands,
-    default_backlog: Option<&str>,
-    json: bool,
-) -> Result<(), RangerError> {
-    let mut conn = pool.acquire().await?;
-    let scope = super::key_scope(default_backlog, &Default::default());
+pub async fn run(ranger: &Ranger, command: TagCommands) -> Result<(), RangerError> {
+    let mut conn = ranger.pool.acquire().await?;
+    let scope = ranger.key_scope(&Default::default());
 
     match command {
         TagCommands::Add { task, tag } => {
             let t = ops::task::get_by_key_prefix(&mut conn, &task, &scope).await?;
             let created = ops::tag::add(&mut conn, t.id, &tag).await?;
-            output::print(&created, json, |tg| {
+            output::print(&created, ranger.json, |tg| {
                 println!("Tagged {} with {}", task, tg.name)
             });
         }
         TagCommands::Remove { task, tag } => {
             let t = ops::task::get_by_key_prefix(&mut conn, &task, &scope).await?;
             ops::tag::remove(&mut conn, t.id, &tag).await?;
-            if !json {
+            if !ranger.json {
                 println!("Removed tag {} from {}", tag, task);
             }
         }
         TagCommands::List { all } => {
             let tags = if all {
                 ops::tag::list_all(&mut conn).await?
-            } else if let Some(bl_id) = default_backlog_id(&mut conn, default_backlog).await {
+            } else if let Some(bl_id) =
+                default_backlog_id(&mut conn, ranger.default_backlog.as_deref()).await
+            {
                 ops::tag::list_for_backlog(&mut conn, bl_id).await?
             } else {
                 ops::tag::list_all(&mut conn).await?
             };
-            output::print_list(&tags, json, "No tags.", |t| println!("{}", t.name));
+            output::print_list(&tags, ranger.json, "No tags.", |t| println!("{}", t.name));
         }
         TagCommands::Prune { apply } => {
             let pruned = ops::tag::prune(&mut conn, !apply).await?;
             let label = if apply { "Removed" } else { "Would remove" };
-            output::print_list(&pruned, json, "No unused tags to remove.", |t| {
+            output::print_list(&pruned, ranger.json, "No unused tags to remove.", |t| {
                 println!("{}: {}", label, t.name)
             });
         }

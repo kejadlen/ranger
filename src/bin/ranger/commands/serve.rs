@@ -14,6 +14,8 @@ use sqlx::SqlitePool;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
+use crate::app::Ranger;
+
 /// Static assets embedded at compile time.
 const STYLE_CSS: &str = include_str!("../../../../static/style.css");
 const BOARD_JS: &str = include_str!("../../../../static/board.js");
@@ -25,12 +27,12 @@ struct AppState {
 }
 
 pub async fn run(
-    pool: &SqlitePool,
+    ranger: &Ranger,
     port: u16,
     default_backlog: Option<String>,
 ) -> Result<(), ranger::error::RangerError> {
     let state = AppState {
-        pool: pool.clone(),
+        pool: ranger.pool.clone(),
         default_backlog,
     };
 
