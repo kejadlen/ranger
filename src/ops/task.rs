@@ -7,11 +7,10 @@ use crate::models::{State, TagParts, Task};
 use crate::position;
 use sqlx::sqlite::SqliteConnection;
 
-const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.backlog_id, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at, tasks.done_at";
+const TASK_COLUMNS: &str = "tasks.id, tasks.key, tasks.title, tasks.description, tasks.state, tasks.position, tasks.archived, tasks.created_at, tasks.updated_at, tasks.done_at";
 
 pub struct CreateTask<'a> {
     pub title: &'a str,
-    pub backlog_id: i64,
     pub state: Option<State>,
     pub description: Option<&'a str>,
 }
@@ -23,14 +22,10 @@ pub async fn create(
     let key = key::generate_key();
     let state = params.state.unwrap_or(State::Icebox);
 
-    let last_pos: Option<String> = sqlx::query_scalar(
-        "SELECT position FROM tasks \
-         WHERE backlog_id = ? \
-         ORDER BY position DESC LIMIT 1",
-    )
-    .bind(params.backlog_id)
-    .fetch_optional(&mut *conn)
-    .await?;
+    let last_pos: Option<String> =
+        sqlx::query_scalar("SELECT position FROM tasks ORDER BY position DESC LIMIT 1")
+            .fetch_optional(&mut *conn)
+            .await?;
 
     let new_pos = position::between(last_pos.as_deref().unwrap_or(""), "");
 
@@ -41,32 +36,20 @@ pub async fn create(
     };
 
     let query = format!(
-        "INSERT INTO tasks (key, backlog_id, title, description, state, position, done_at) \
-         VALUES (?, ?, ?, ?, ?, ?, {}) \
+        "INSERT INTO tasks (key, title, description, state, position, done_at) \
+         VALUES (?, ?, ?, ?, ?, {}) \
          RETURNING {TASK_COLUMNS}",
         done_at.unwrap_or("NULL")
     );
 
     let task = sqlx::query_as::<_, Task>(&query)
         .bind(&key)
-        .bind(params.backlog_id)
         .bind(params.title)
         .bind(params.description)
         .bind(state.as_str())
         .bind(&new_pos)
         .fetch_one(&mut *conn)
         .await?;
-
-    let backlog_name: String = sqlx::query_scalar("SELECT name FROM backlogs WHERE id = ?")
-        .bind(params.backlog_id)
-        .fetch_one(&mut *conn)
-        .await?;
-    crate::ops::tag::add(
-        conn,
-        task.id,
-        &crate::ops::backlog::project_tag(&backlog_name),
-    )
-    .await?;
 
     Ok(task)
 }
@@ -130,7 +113,7 @@ fn term_clause(term: &Term) -> (String, Vec<&str>) {
 
 /// SQL conditions on `tasks` for every term, each led by ` AND `, with the
 /// values they bind.
-fn terms_sql(terms: &[Term]) -> (String, Vec<&str>) {
+pub(crate) fn terms_sql(terms: &[Term]) -> (String, Vec<&str>) {
     let mut sql = String::new();
     let mut binds = Vec::new();
     for term in terms {
@@ -142,8 +125,7 @@ fn terms_sql(terms: &[Term]) -> (String, Vec<&str>) {
     (sql, binds)
 }
 
-/// The tasks matching `filter`, in board order. Positions are only ordered
-/// within a backlog, so tasks from different backlogs are grouped.
+/// The tasks matching `filter`, in board order.
 pub async fn list(
     conn: &mut SqliteConnection,
     filter: &ListFilter,
@@ -163,7 +145,7 @@ pub async fn list(
     query.push_str(if is_done_only {
         " ORDER BY done_at"
     } else {
-        " ORDER BY backlog_id, position"
+        " ORDER BY position"
     });
 
     let mut q = sqlx::query_as::<_, Task>(&query);
@@ -352,10 +334,6 @@ pub async fn move_task(
     placement: Placement<'_>,
 ) -> Result<(), RangerError> {
     for anchor in placement.anchors() {
-        // Positions are only ordered within a backlog.
-        if anchor.backlog_id != task.backlog_id {
-            return Err(RangerError::BacklogMismatch);
-        }
         if anchor.state != task.state {
             return Err(RangerError::StateMismatch {
                 task_state: task.state.to_string(),
@@ -366,13 +344,11 @@ pub async fn move_task(
 
     let new_pos = match placement {
         Placement::After(anchor) => {
-            let next =
-                next_position_after(&mut *conn, task.backlog_id, task.id, &anchor.position).await?;
+            let next = next_position_after(&mut *conn, task.id, &anchor.position).await?;
             position::between(&anchor.position, next.as_deref().unwrap_or(""))
         }
         Placement::Before(anchor) => {
-            let prev = prev_position_before(&mut *conn, task.backlog_id, task.id, &anchor.position)
-                .await?;
+            let prev = prev_position_before(&mut *conn, task.id, &anchor.position).await?;
             position::between(prev.as_deref().unwrap_or(""), &anchor.position)
         }
         Placement::Between { after, before } => {
@@ -393,38 +369,31 @@ async fn reorder(
     old_state: &State,
     new_state: &State,
 ) -> Result<(), RangerError> {
-    let backlog_id: i64 = sqlx::query_scalar("SELECT backlog_id FROM tasks WHERE id = ?")
-        .bind(task_id)
-        .fetch_one(&mut *conn)
-        .await?;
-
     let moving_up = new_state.rank() > old_state.rank();
 
     let new_pos = if moving_up {
-        let last_in_state =
-            last_position_in_state(&mut *conn, backlog_id, task_id, new_state).await?;
+        let last_in_state = last_position_in_state(&mut *conn, task_id, new_state).await?;
 
         match last_in_state {
             Some(last) => {
-                let next = next_position_after(&mut *conn, backlog_id, task_id, &last).await?;
+                let next = next_position_after(&mut *conn, task_id, &last).await?;
                 position::between(&last, next.as_deref().unwrap_or(""))
             }
             None => {
-                let last = last_position(&mut *conn, backlog_id, task_id).await?;
+                let last = last_position(&mut *conn, task_id).await?;
                 position::between(last.as_deref().unwrap_or(""), "")
             }
         }
     } else {
-        let first_in_state =
-            first_position_in_state(&mut *conn, backlog_id, task_id, new_state).await?;
+        let first_in_state = first_position_in_state(&mut *conn, task_id, new_state).await?;
 
         match first_in_state {
             Some(first) => {
-                let prev = prev_position_before(&mut *conn, backlog_id, task_id, &first).await?;
+                let prev = prev_position_before(&mut *conn, task_id, &first).await?;
                 position::between(prev.as_deref().unwrap_or(""), &first)
             }
             None => {
-                let first = first_position(&mut *conn, backlog_id, task_id).await?;
+                let first = first_position(&mut *conn, task_id).await?;
                 position::between("", first.as_deref().unwrap_or(""))
             }
         }
@@ -437,15 +406,13 @@ async fn reorder(
 
 async fn last_position(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     exclude_task_id: i64,
 ) -> Result<Option<String>, RangerError> {
     Ok(sqlx::query_scalar(
         "SELECT position FROM tasks \
-         WHERE backlog_id = ? AND id != ? \
+         WHERE id != ? \
          ORDER BY position DESC LIMIT 1",
     )
-    .bind(backlog_id)
     .bind(exclude_task_id)
     .fetch_optional(&mut *conn)
     .await?)
@@ -453,15 +420,13 @@ async fn last_position(
 
 async fn first_position(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     exclude_task_id: i64,
 ) -> Result<Option<String>, RangerError> {
     Ok(sqlx::query_scalar(
         "SELECT position FROM tasks \
-         WHERE backlog_id = ? AND id != ? \
+         WHERE id != ? \
          ORDER BY position ASC LIMIT 1",
     )
-    .bind(backlog_id)
     .bind(exclude_task_id)
     .fetch_optional(&mut *conn)
     .await?)
@@ -469,16 +434,14 @@ async fn first_position(
 
 async fn next_position_after(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     exclude_task_id: i64,
     pos: &str,
 ) -> Result<Option<String>, RangerError> {
     Ok(sqlx::query_scalar(
         "SELECT position FROM tasks \
-         WHERE backlog_id = ? AND id != ? AND position > ? \
+         WHERE id != ? AND position > ? \
          ORDER BY position ASC LIMIT 1",
     )
-    .bind(backlog_id)
     .bind(exclude_task_id)
     .bind(pos)
     .fetch_optional(&mut *conn)
@@ -487,16 +450,14 @@ async fn next_position_after(
 
 async fn prev_position_before(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     exclude_task_id: i64,
     pos: &str,
 ) -> Result<Option<String>, RangerError> {
     Ok(sqlx::query_scalar(
         "SELECT position FROM tasks \
-         WHERE backlog_id = ? AND id != ? AND position < ? \
+         WHERE id != ? AND position < ? \
          ORDER BY position DESC LIMIT 1",
     )
-    .bind(backlog_id)
     .bind(exclude_task_id)
     .bind(pos)
     .fetch_optional(&mut *conn)
@@ -505,16 +466,14 @@ async fn prev_position_before(
 
 async fn last_position_in_state(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     exclude_task_id: i64,
     state: &State,
 ) -> Result<Option<String>, RangerError> {
     Ok(sqlx::query_scalar(
         "SELECT position FROM tasks \
-         WHERE backlog_id = ? AND state = ? AND id != ? \
+         WHERE state = ? AND id != ? \
          ORDER BY position DESC LIMIT 1",
     )
-    .bind(backlog_id)
     .bind(state.as_str())
     .bind(exclude_task_id)
     .fetch_optional(&mut *conn)
@@ -523,16 +482,14 @@ async fn last_position_in_state(
 
 async fn first_position_in_state(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     exclude_task_id: i64,
     state: &State,
 ) -> Result<Option<String>, RangerError> {
     Ok(sqlx::query_scalar(
         "SELECT position FROM tasks \
-         WHERE backlog_id = ? AND state = ? AND id != ? \
+         WHERE state = ? AND id != ? \
          ORDER BY position ASC LIMIT 1",
     )
-    .bind(backlog_id)
     .bind(state.as_str())
     .bind(exclude_task_id)
     .fetch_optional(&mut *conn)
@@ -552,12 +509,10 @@ async fn set_position(
     Ok(())
 }
 
-pub async fn rebalance(conn: &mut SqliteConnection, backlog_id: i64) -> Result<usize, RangerError> {
-    let ids: Vec<(i64,)> =
-        sqlx::query_as("SELECT id FROM tasks WHERE backlog_id = ? ORDER BY position")
-            .bind(backlog_id)
-            .fetch_all(&mut *conn)
-            .await?;
+pub async fn rebalance(conn: &mut SqliteConnection) -> Result<usize, RangerError> {
+    let ids: Vec<(i64,)> = sqlx::query_as("SELECT id FROM tasks ORDER BY position")
+        .fetch_all(&mut *conn)
+        .await?;
     let positions = position::spread(ids.len());
 
     for ((id,), pos) in ids.iter().zip(&positions) {
@@ -580,7 +535,6 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::models::State;
-    use crate::ops::backlog;
     use tempfile::tempdir;
 
     async fn test_pool() -> sqlx::SqlitePool {
@@ -593,12 +547,10 @@ mod tests {
     async fn create_task_in_backlog() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
             &mut conn,
             CreateTask {
                 title: "My Task",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -608,7 +560,6 @@ mod tests {
 
         assert_eq!(task.title, "My Task");
         assert_eq!(task.state, State::Icebox);
-        assert_eq!(task.backlog_id, bl.id);
         assert!(!task.key.is_empty());
         assert!(!task.position.is_empty());
     }
@@ -617,12 +568,10 @@ mod tests {
     async fn list_tasks_ordered_by_position() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "First",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -633,7 +582,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Second",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -644,7 +592,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Third",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -663,12 +610,10 @@ mod tests {
     async fn list_tasks_with_state_filter() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         create(
             &mut conn,
             CreateTask {
                 title: "Icebox task",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -679,7 +624,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Ready task",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -716,12 +660,10 @@ mod tests {
     async fn get_task_by_key_prefix() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Find me",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -739,12 +681,10 @@ mod tests {
     async fn edit_task_fields() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Original",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -771,12 +711,10 @@ mod tests {
     async fn delete_task() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Delete me",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -797,12 +735,10 @@ mod tests {
     async fn get_by_id_returns_task() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Find by id",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -818,30 +754,20 @@ mod tests {
     async fn get_by_key_prefix_ambiguous() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
-        // Insert two tasks with keys that share a prefix, bypassing
-        // the random key generator
-        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES ('kkkkaaaa', ?, 'First', 'icebox', 'a')")
-            .bind(bl.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES ('kkkkbbbb', ?, 'Second', 'icebox', 'b')")
-            .bind(bl.id)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
+        // Two tasks with keys that share a prefix, bypassing the random key
+        // generator.
+        insert_keyed(&mut conn, "kkkkaaaa", &[]).await;
+        insert_keyed(&mut conn, "kkkkbbbb", &[]).await;
 
         let result = get_by_key_prefix(&mut conn, "kkkk", &Filter::default()).await;
         assert!(result.is_err());
     }
 
     /// Insert a task with a fixed key and the given tags.
-    async fn insert_keyed(conn: &mut SqliteConnection, bl: i64, key: &str, tags: &[&str]) -> Task {
-        sqlx::query("INSERT INTO tasks (key, backlog_id, title, state, position) VALUES (?, ?, ?, 'icebox', 'a')")
+    async fn insert_keyed(conn: &mut SqliteConnection, key: &str, tags: &[&str]) -> Task {
+        sqlx::query("INSERT INTO tasks (key, title, state, position) VALUES (?, ?, 'icebox', 'a')")
             .bind(key)
-            .bind(bl)
             .bind(key)
             .execute(&mut *conn)
             .await
@@ -859,10 +785,9 @@ mod tests {
     async fn get_by_key_prefix_prefers_the_scope() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Alpha").await.unwrap();
-        insert_keyed(&mut conn, bl.id, "kkkkaaaa", &["project:alpha"]).await;
-        insert_keyed(&mut conn, bl.id, "kkkkbbbb", &["project:beta"]).await;
-        insert_keyed(&mut conn, bl.id, "kkkkbccc", &["project:beta"]).await;
+        insert_keyed(&mut conn, "kkkkaaaa", &["project:alpha"]).await;
+        insert_keyed(&mut conn, "kkkkbbbb", &["project:beta"]).await;
+        insert_keyed(&mut conn, "kkkkbccc", &["project:beta"]).await;
         let alpha: Filter = "project:alpha".parse().unwrap();
         let beta: Filter = "project:beta".parse().unwrap();
 
@@ -937,9 +862,8 @@ mod tests {
             let dir = tempdir().unwrap();
             let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
             let mut conn = pool.acquire().await.unwrap();
-            let bl = backlog::create(&mut conn, "Test").await.unwrap();
             for (key, tags) in &tasks {
-                insert_keyed(&mut conn, bl.id, key, tags).await;
+                insert_keyed(&mut conn, key, tags).await;
             }
             let lengths = prefix_lengths(&mut conn, &scope).await.unwrap();
             for (key, _) in &tasks {
@@ -954,12 +878,10 @@ mod tests {
     async fn edit_title_only() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Original",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -978,12 +900,10 @@ mod tests {
     async fn move_task_to_end() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "First",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -994,7 +914,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Second",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1016,12 +935,10 @@ mod tests {
     async fn move_task_before() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "A",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1032,7 +949,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "B",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1043,7 +959,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "C",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1065,12 +980,10 @@ mod tests {
     async fn move_task_after() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "A",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1081,7 +994,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "B",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1092,7 +1004,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "C",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1114,12 +1025,10 @@ mod tests {
     async fn move_task_between() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "A",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1130,7 +1039,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "B",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1141,7 +1049,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "C",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1170,12 +1077,10 @@ mod tests {
     async fn move_task_rejects_cross_state() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let ready = create(
             &mut conn,
             CreateTask {
                 title: "Q",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1186,7 +1091,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "D",
-                backlog_id: bl.id,
                 state: Some(State::Done),
                 description: None,
             },
@@ -1202,49 +1106,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn move_task_rejects_cross_backlog() {
+    async fn move_task_across_projects() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
         let mut tasks = Vec::new();
-        for name in ["One", "Two"] {
-            let bl = backlog::create(&mut conn, name).await.unwrap();
-            tasks.push(
-                create(
-                    &mut conn,
-                    CreateTask {
-                        title: name,
-                        backlog_id: bl.id,
-                        state: None,
-                        description: None,
-                    },
-                )
+        for name in ["one", "two", "three"] {
+            let task = create(
+                &mut conn,
+                CreateTask {
+                    title: name,
+                    state: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+            crate::ops::tag::add(&mut conn, task.id, &format!("project:{name}"))
                 .await
-                .unwrap(),
-            );
+                .unwrap();
+            tasks.push(task);
         }
 
-        let err = move_task(&mut conn, &tasks[0], Placement::After(&tasks[1]))
+        // Positions are one global order, whatever project a task is in.
+        move_task(&mut conn, &tasks[2], Placement::Before(&tasks[0]))
             .await
-            .unwrap_err();
-        assert!(matches!(err, RangerError::BacklogMismatch));
-        assert_eq!(
-            err.to_string(),
-            "can't move a task relative to a task in another backlog"
-        );
+            .unwrap();
+        let titles: Vec<String> = list(&mut conn, &ListFilter::default())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(titles, ["three", "one", "two"]);
     }
 
     #[tokio::test]
     async fn state_change_up_places_at_end_of_target_group() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         // Create two done tasks and one ready task
         let d1 = create(
             &mut conn,
             CreateTask {
                 title: "Done 1",
-                backlog_id: bl.id,
                 state: Some(State::Done),
                 description: None,
             },
@@ -1255,7 +1160,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Done 2",
-                backlog_id: bl.id,
                 state: Some(State::Done),
                 description: None,
             },
@@ -1266,7 +1170,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Ready 1",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1302,14 +1205,12 @@ mod tests {
     async fn state_change_down_places_at_beginning_of_target_group() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         // Create two ready tasks and one in_progress task
         let q1 = create(
             &mut conn,
             CreateTask {
                 title: "Ready 1",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1320,7 +1221,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Ready 2",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1331,7 +1231,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "In Progress",
-                backlog_id: bl.id,
                 state: Some(State::InProgress),
                 description: None,
             },
@@ -1367,13 +1266,11 @@ mod tests {
     async fn state_change_same_state_does_not_reorder() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "First",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1384,7 +1281,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Second",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1417,13 +1313,11 @@ mod tests {
     async fn state_change_up_to_empty_group() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "Ready task",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1454,13 +1348,11 @@ mod tests {
     async fn state_change_down_to_empty_group() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "In progress task",
-                backlog_id: bl.id,
                 state: Some(State::InProgress),
                 description: None,
             },
@@ -1491,7 +1383,6 @@ mod tests {
     async fn rebalance_reassigns_positions() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         // Create tasks — repeated appends make positions drift toward "z"
         for title in ["A", "B", "C"] {
@@ -1499,7 +1390,6 @@ mod tests {
                 &mut conn,
                 CreateTask {
                     title,
-                    backlog_id: bl.id,
                     state: None,
                     description: None,
                 },
@@ -1515,7 +1405,7 @@ mod tests {
             .map(|t| t.position.clone())
             .collect();
 
-        let count = rebalance(&mut conn, bl.id).await.unwrap();
+        let count = rebalance(&mut conn).await.unwrap();
         assert_eq!(count, 3);
 
         let after = list(&mut conn, &ListFilter::default()).await.unwrap();
@@ -1538,9 +1428,8 @@ mod tests {
     async fn rebalance_empty_backlog() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
-        let count = rebalance(&mut conn, bl.id).await.unwrap();
+        let count = rebalance(&mut conn).await.unwrap();
         assert_eq!(count, 0);
     }
 
@@ -1548,13 +1437,11 @@ mod tests {
     async fn set_archived_and_filter() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "Keep",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1565,7 +1452,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Archive me",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },
@@ -1606,12 +1492,10 @@ mod tests {
     async fn list_tasks_with_tag_and_state_filter() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "Tagged ready",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1622,7 +1506,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Untagged ready",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -1647,26 +1530,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_groups_backlogs_and_keeps_their_order() {
+    async fn list_orders_every_project_by_one_position() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let one = backlog::create(&mut conn, "one").await.unwrap();
-        let two = backlog::create(&mut conn, "two").await.unwrap();
-        // Interleave creation so positions collide across backlogs.
-        for (title, bl) in [("a1", &one), ("b1", &two), ("a2", &one), ("b2", &two)] {
-            create(
+        for (title, project) in [("a1", "one"), ("b1", "two"), ("a2", "one"), ("b2", "two")] {
+            let task = create(
                 &mut conn,
                 CreateTask {
                     title,
-                    backlog_id: bl.id,
                     state: None,
                     description: None,
                 },
             )
             .await
             .unwrap();
+            crate::ops::tag::add(&mut conn, task.id, &format!("project:{project}"))
+                .await
+                .unwrap();
         }
-        assert_eq!(titles(&mut conn, "").await, ["a1", "a2", "b1", "b2"]);
+        assert_eq!(titles(&mut conn, "").await, ["a1", "b1", "a2", "b2"]);
         assert_eq!(titles(&mut conn, "project:two").await, ["b1", "b2"]);
     }
 
@@ -1691,14 +1573,12 @@ mod tests {
     async fn list_applies_filter_terms() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let mut make = async |title, state, tags: &[&str]| {
             let task = create(
                 &mut conn,
                 CreateTask {
                     title,
-                    backlog_id: bl.id,
                     state: Some(state),
                     description: None,
                 },
@@ -1743,7 +1623,6 @@ mod tests {
     async fn list_combines_shorthand_with_terms() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         for (title, state) in [
             ("a", State::Ready),
@@ -1754,7 +1633,6 @@ mod tests {
                 &mut conn,
                 CreateTask {
                     title,
-                    backlog_id: bl.id,
                     state: Some(state),
                     description: None,
                 },
@@ -1819,52 +1697,6 @@ mod tests {
         assert!(matches!(err, RangerError::InvalidTag(_)));
     }
 
-    /// However tasks are spread across backlogs, each one carries the
-    /// `project:` tag of its own backlog.
-    #[hegel::test]
-    fn prop_tasks_carry_their_backlog_tag(tc: hegel::TestCase) {
-        use hegel::generators as gs;
-
-        let names = ["ranger", "dotfiles", "Ranger"];
-        let placements =
-            tc.draw(gs::vecs(gs::integers::<usize>().max_value(names.len() - 1)).max_size(6));
-
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            let dir = tempdir().unwrap();
-            let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
-            let mut conn = pool.acquire().await.unwrap();
-            let mut backlogs = Vec::new();
-            for name in names {
-                backlogs.push(backlog::create(&mut conn, name).await.unwrap());
-            }
-            for (i, &b) in placements.iter().enumerate() {
-                let task = create(
-                    &mut conn,
-                    CreateTask {
-                        title: &format!("t{i}"),
-                        backlog_id: backlogs[b].id,
-                        state: None,
-                        description: None,
-                    },
-                )
-                .await
-                .unwrap();
-                let projects: Vec<String> = crate::ops::tag::list_for_task(&mut conn, task.id)
-                    .await
-                    .unwrap()
-                    .into_iter()
-                    .filter(|t| t.key == "project")
-                    .map(|t| t.value)
-                    .collect();
-                assert_eq!(projects, [names[b]]);
-            }
-        });
-    }
-
     /// `list` agrees with evaluating the filter directly against each task's
     /// state and tags.
     #[hegel::test]
@@ -1878,16 +1710,11 @@ mod tests {
         const TAGS: [&str; 5] = ["bug", "project:ranger", "project:dotfiles", ":a:b", "-x"];
 
         let task_count = tc.draw(gs::integers::<usize>().max_value(6));
-        // Tasks land in one of two backlogs, which tags them with its
-        // `project:` tag on top of any drawn ones.
-        const BACKLOGS: [&str; 2] = ["ranger", "dotfiles"];
-        let tasks: Vec<(usize, State, Vec<&str>)> = (0..task_count)
+        let tasks: Vec<(State, Vec<&str>)> = (0..task_count)
             .map(|_| {
-                let backlog = tc.draw(gs::integers::<usize>().max_value(1));
                 let state = tc.draw(gs::sampled_from(STATES.to_vec()));
-                let mut tags = tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(3));
-                tags.push(["project:ranger", "project:dotfiles"][backlog]);
-                (backlog, state, tags)
+                let tags = tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(3));
+                (state, tags)
             })
             .collect();
 
@@ -1924,7 +1751,7 @@ mod tests {
         let mut expected: Vec<String> = tasks
             .iter()
             .enumerate()
-            .filter(|(_, (_, state, tags))| filter.0.iter().all(|t| matches(state, tags, t)))
+            .filter(|(_, (state, tags))| filter.0.iter().all(|t| matches(state, tags, t)))
             .map(|(i, _)| format!("t{i}"))
             .collect();
         expected.sort();
@@ -1937,16 +1764,11 @@ mod tests {
             let dir = tempdir().unwrap();
             let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
             let mut conn = pool.acquire().await.unwrap();
-            let mut bls = Vec::new();
-            for name in BACKLOGS {
-                bls.push(backlog::create(&mut conn, name).await.unwrap());
-            }
-            for (i, (bl, state, tags)) in tasks.iter().enumerate() {
+            for (i, (state, tags)) in tasks.iter().enumerate() {
                 let task = create(
                     &mut conn,
                     CreateTask {
                         title: &format!("t{i}"),
-                        backlog_id: bls[*bl].id,
                         state: Some(state.clone()),
                         description: None,
                     },
@@ -1981,13 +1803,11 @@ mod tests {
     async fn create_with_done_state_sets_done_at() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Done task",
-                backlog_id: bl.id,
                 state: Some(State::Done),
                 description: None,
             },
@@ -2002,13 +1822,11 @@ mod tests {
     async fn create_with_non_done_state_has_no_done_at() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Ready task",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -2026,13 +1844,11 @@ mod tests {
     async fn edit_to_done_sets_done_at() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Task",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -2054,13 +1870,11 @@ mod tests {
     async fn edit_from_done_clears_done_at() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let task = create(
             &mut conn,
             CreateTask {
                 title: "Task",
-                backlog_id: bl.id,
                 state: Some(State::Done),
                 description: None,
             },
@@ -2082,14 +1896,12 @@ mod tests {
     async fn done_tasks_ordered_by_done_at() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         // Create three ready tasks
         let t1 = create(
             &mut conn,
             CreateTask {
                 title: "First done",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -2100,7 +1912,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Second done",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },
@@ -2111,7 +1922,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Third done",
-                backlog_id: bl.id,
                 state: Some(State::Ready),
                 description: None,
             },

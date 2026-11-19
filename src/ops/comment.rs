@@ -32,7 +32,7 @@ pub async fn list(conn: &mut SqliteConnection, task_id: i64) -> Result<Vec<Comme
 mod tests {
     use super::*;
     use crate::db;
-    use crate::ops::{backlog, task};
+    use crate::ops::task;
     use tempfile::tempdir;
 
     async fn test_pool() -> sqlx::SqlitePool {
@@ -45,12 +45,10 @@ mod tests {
     async fn add_and_list_comments() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
         let t = task::create(
             &mut conn,
             task::CreateTask {
                 title: "Task",
-                backlog_id: bl.id,
                 state: None,
                 description: None,
             },

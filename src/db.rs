@@ -291,6 +291,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_backlog_id_keeps_order_comments_and_tags() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = migrate_before(&db_path, 17).await;
+
+        // Positions collide across backlogs, and backlog 2 sorts first by
+        // name but second by id.
+        sqlx::raw_sql(
+            "INSERT INTO backlogs (id, name) VALUES (1, 'zeta'), (2, 'alpha');
+             INSERT INTO tasks (id, key, backlog_id, title, position) VALUES
+                 (1, 'kkkk', 2, 'alpha second', 'n'),
+                 (2, 'llll', 1, 'zeta first', 'b'),
+                 (3, 'mmmm', 2, 'alpha first', 'b'),
+                 (4, 'nnnn', 1, 'zeta second', 'nz');
+             INSERT INTO tags (id, key, value) VALUES (1, '', 'bug');
+             INSERT INTO task_tags (task_id, tag_id) VALUES (3, 1);
+             INSERT INTO comments (task_id, body) VALUES (4, 'still here');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = connect(&db_path).await.unwrap();
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT title, position FROM tasks ORDER BY position")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let titles: Vec<&str> = rows.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(
+            titles,
+            ["zeta first", "zeta second", "alpha first", "alpha second"]
+        );
+        for (_, pos) in &rows {
+            assert!(!pos.ends_with('a'), "{pos}");
+        }
+
+        let tagged: (i64,) = sqlx::query_as("SELECT task_id FROM task_tags WHERE tag_id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tagged.0, 3);
+        let body: (String,) = sqlx::query_as("SELECT body FROM comments WHERE task_id = 4")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(body.0, "still here");
+    }
+
+    #[tokio::test]
     async fn no_backup_for_fresh_db() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");

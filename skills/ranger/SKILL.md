@@ -65,7 +65,7 @@ Flags are spelled out in full: `--description`, not `--desc`; `--backlog` has no
 
 ### Backlog scoping
 
-The `RANGER_DEFAULT_BACKLOG` env var sets the default `--backlog` value so you can omit it. `--backlog` limits `tag list` to that backlog's tags, and task keys resolve against that backlog first, narrowed by `--filter` when given, so displayed prefixes stay short. When nothing there matches, the key is looked up across every backlog, so a key from another backlog still works without passing `--backlog`. `-B`/`-A` anchors must be in the same backlog as the task being placed.
+The `RANGER_DEFAULT_BACKLOG` env var sets the default `--backlog` value so you can omit it. `--backlog` limits `tag list` to that backlog's tags, and task keys resolve against that backlog first, narrowed by `--filter` when given, so displayed prefixes stay short. When nothing there matches, the key is looked up across every backlog, so a key from another backlog still works without passing `--backlog`. `-B`/`-A` can anchor to a task in any backlog.
 
 Task keys are short prefixes (e.g. `tl`) of longer IDs — use just enough to be unique. There is no `--top` or `--bottom` flag; to move to the top, use `-B` with the first task's key.
 

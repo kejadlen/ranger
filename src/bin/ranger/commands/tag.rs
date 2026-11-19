@@ -1,6 +1,7 @@
 use clap::Subcommand;
 use ranger::db::SqliteConnection;
 use ranger::error::RangerError;
+use ranger::filter::Filter;
 use ranger::ops;
 
 use crate::app::Ranger;
@@ -38,13 +39,12 @@ pub enum TagCommands {
     },
 }
 
-/// The ID of the default backlog, whose tags `tag list` shows. `None` when
-/// there's no default or the backlog doesn't exist.
-async fn backlog_id(conn: &mut SqliteConnection, name: Option<&str>) -> Option<i64> {
-    ops::backlog::get_by_name(conn, name?)
-        .await
-        .ok()
-        .map(|b| b.id)
+/// The filter for the backlog whose tags `tag list` shows. `None` when
+/// there's no backlog or it doesn't exist.
+async fn backlog_filter(conn: &mut SqliteConnection, name: Option<&str>) -> Option<Filter> {
+    let backlog = ops::backlog::get_by_name(conn, name?).await.ok()?;
+    let term = ops::backlog::project_term(&backlog.name).ok()?;
+    Some(Filter(vec![term]))
 }
 
 pub async fn run(ranger: &Ranger, command: TagCommands) -> Result<(), RangerError> {
@@ -69,8 +69,9 @@ pub async fn run(ranger: &Ranger, command: TagCommands) -> Result<(), RangerErro
         TagCommands::List { all } => {
             let tags = if all {
                 ops::tag::list_all(&mut conn).await?
-            } else if let Some(bl_id) = backlog_id(&mut conn, ranger.backlog.as_deref()).await {
-                ops::tag::list_for_backlog(&mut conn, bl_id).await?
+            } else if let Some(filter) = backlog_filter(&mut conn, ranger.backlog.as_deref()).await
+            {
+                ops::tag::list_used_by(&mut conn, &filter).await?
             } else {
                 ops::tag::list_all(&mut conn).await?
             };

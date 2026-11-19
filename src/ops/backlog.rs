@@ -59,6 +59,14 @@ pub async fn get_by_name(conn: &mut SqliteConnection, name: &str) -> Result<Back
 /// other backlogs may carry it; `tag prune` removes it once it's unused.
 pub async fn delete(conn: &mut SqliteConnection, name: &str) -> Result<Backlog, RangerError> {
     let backlog = get_by_name(&mut *conn, name).await?;
+    // Its tasks are the ones carrying its `project:` tag.
+    sqlx::query(
+        "DELETE FROM tasks WHERE id IN (SELECT tt.task_id FROM task_tags tt \
+         JOIN tags t ON t.id = tt.tag_id WHERE t.key = 'project' AND t.value = ?)",
+    )
+    .bind(&backlog.name)
+    .execute(&mut *conn)
+    .await?;
     sqlx::query("DELETE FROM backlogs WHERE id = ?")
         .bind(backlog.id)
         .execute(&mut *conn)
@@ -136,6 +144,38 @@ mod tests {
 
         let result = get_by_name(&mut conn, "ToDelete").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_backlog_deletes_only_its_tasks() {
+        use crate::ops::{tag, task};
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        create(&mut conn, "gone").await.unwrap();
+        for (title, project) in [("doomed", "gone"), ("spared", "kept")] {
+            let t = task::create(
+                &mut conn,
+                task::CreateTask {
+                    title,
+                    state: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+            tag::add(&mut conn, t.id, &project_tag(project))
+                .await
+                .unwrap();
+        }
+
+        delete(&mut conn, "gone").await.unwrap();
+        let left: Vec<String> = task::list(&mut conn, &Default::default())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(left, ["spared"]);
     }
 
     #[tokio::test]

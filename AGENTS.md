@@ -47,9 +47,9 @@ tests/
 ## Key Design Decisions
 
 - **Keys**: jj-style random strings (16 chars, `k-z` alphabet). Reference by shortest unique prefix.
-- **Positioning**: Lexicographic string-based ordering within backlogs. Insert between two positions without renumbering.
+- **Positioning**: Lexicographic string-based ordering, one global order across all tasks. Insert between two positions without renumbering.
 - **Single crate**: Library (`src/lib.rs`) and binary (`src/bin/ranger/`) in one crate. No workspace.
-- **Single backlog per task**: Each task belongs to exactly one backlog. `backlog_id` and `position` live directly on the `tasks` table.
+- **Backlogs are tags**: A task is in a backlog when it carries that backlog's `project:<name>` tag. `position` lives directly on the `tasks` table.
 - **Subtasks are tasks**: `parent_id` on tasks — subtasks get full task capabilities.
 - **Tags**: Free-form labels on tasks via a many-to-many join table (`task_tags`). Used for cross-cutting concerns like `web`, `cli`, `infra`. Filter tasks by tag with `--tag`.
 - **No compile-time checked queries**: Using `sqlx::query_as` with runtime binding, not `query_as!` macros. No need for `DATABASE_URL` at build time.
