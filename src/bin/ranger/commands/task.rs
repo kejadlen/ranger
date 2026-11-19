@@ -211,35 +211,23 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
             archived,
         } => {
             let mut conn = pool.acquire().await?;
-            let filter = ListFilter {
+            let mut filter = ListFilter {
                 state,
                 include_archived: archived,
                 tag,
                 terms: filter.clone(),
             };
 
-            if let Some(backlog_name) = ranger.backlog.as_deref() {
-                let bl = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
-                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
-                let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
-                let note = empty_task_note(&filter, Some(backlog_name));
-                output::print_list(&tasks, json, &note, |t| print_task(t, &prefixes));
-            } else {
-                // List all tasks (no backlog filter)
-                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
-                let backlogs = ops::backlog::list(&mut conn).await?;
-                let mut all_tasks = Vec::new();
-                for bl in &backlogs {
-                    let tasks = ops::task::list(&mut conn, bl.id, &filter).await?;
-                    for t in tasks {
-                        if !all_tasks.iter().any(|at: &Task| at.id == t.id) {
-                            all_tasks.push(t);
-                        }
-                    }
-                }
-                let note = empty_task_note(&filter, None);
-                output::print_list(&all_tasks, json, &note, |t| print_task(t, &prefixes));
+            // The note echoes the user's terms, naming the backlog separately.
+            let backlog = ranger.backlog.as_deref();
+            let note = empty_task_note(&filter, backlog);
+            if let Some(name) = backlog {
+                ops::backlog::get_by_name(&mut conn, name).await?;
+                filter.terms.0.insert(0, ops::backlog::project_term(name)?);
             }
+            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+            let tasks = ops::task::list(&mut conn, &filter).await?;
+            output::print_list(&tasks, json, &note, |t| print_task(t, &prefixes));
         }
         TaskCommands::Show { key } => {
             let mut conn = pool.acquire().await?;

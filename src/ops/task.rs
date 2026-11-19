@@ -142,14 +142,15 @@ fn terms_sql(terms: &[Term]) -> (String, Vec<&str>) {
     (sql, binds)
 }
 
+/// The tasks matching `filter`, in board order. Positions are only ordered
+/// within a backlog, so tasks from different backlogs are grouped.
 pub async fn list(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
     filter: &ListFilter,
 ) -> Result<Vec<Task>, RangerError> {
     let terms = filter.all_terms()?;
 
-    let mut query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE backlog_id = ?");
+    let mut query = format!("SELECT {TASK_COLUMNS} FROM tasks WHERE 1");
     if !filter.include_archived {
         query.push_str(" AND archived = 0");
     }
@@ -162,10 +163,10 @@ pub async fn list(
     query.push_str(if is_done_only {
         " ORDER BY done_at"
     } else {
-        " ORDER BY position"
+        " ORDER BY backlog_id, position"
     });
 
-    let mut q = sqlx::query_as::<_, Task>(&query).bind(backlog_id);
+    let mut q = sqlx::query_as::<_, Task>(&query);
     for bind in binds {
         q = q.bind(bind);
     }
@@ -552,22 +553,18 @@ async fn set_position(
 }
 
 pub async fn rebalance(conn: &mut SqliteConnection, backlog_id: i64) -> Result<usize, RangerError> {
-    let tasks = list(
-        &mut *conn,
-        backlog_id,
-        &ListFilter {
-            include_archived: true,
-            ..Default::default()
-        },
-    )
-    .await?;
-    let positions = position::spread(tasks.len());
+    let ids: Vec<(i64,)> =
+        sqlx::query_as("SELECT id FROM tasks WHERE backlog_id = ? ORDER BY position")
+            .bind(backlog_id)
+            .fetch_all(&mut *conn)
+            .await?;
+    let positions = position::spread(ids.len());
 
-    for (task, pos) in tasks.iter().zip(&positions) {
-        set_position(&mut *conn, task.id, pos).await?;
+    for ((id,), pos) in ids.iter().zip(&positions) {
+        set_position(&mut *conn, *id, pos).await?;
     }
 
-    Ok(tasks.len())
+    Ok(ids.len())
 }
 
 pub async fn delete(conn: &mut SqliteConnection, task_id: i64) -> Result<(), RangerError> {
@@ -655,9 +652,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let tasks = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(tasks.len(), 3);
         assert_eq!(tasks[0].id, t1.id);
         assert_eq!(tasks[1].id, t2.id);
@@ -694,7 +689,6 @@ mod tests {
 
         let icebox = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Icebox),
                 ..Default::default()
@@ -707,7 +701,6 @@ mod tests {
 
         let ready = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Ready),
                 ..Default::default()
@@ -796,9 +789,7 @@ mod tests {
         let result = get_by_key_prefix(&mut conn, &task.key, &Filter::default()).await;
         assert!(result.is_err());
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let tasks = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(tasks.len(), 0);
     }
 
@@ -1016,9 +1007,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let tasks = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(tasks[0].id, t2.id);
         assert_eq!(tasks[1].id, t1.id);
     }
@@ -1066,9 +1055,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let tasks = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(tasks[0].id, t3.id);
         assert_eq!(tasks[1].id, t1.id);
         assert_eq!(tasks[2].id, t2.id);
@@ -1117,9 +1104,7 @@ mod tests {
             .await
             .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let tasks = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(tasks[0].id, t2.id);
         assert_eq!(tasks[1].id, t3.id);
         assert_eq!(tasks[2].id, t1.id);
@@ -1175,9 +1160,7 @@ mod tests {
         .await
         .unwrap();
 
-        let tasks = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let tasks = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(tasks[0].id, t1.id);
         assert_eq!(tasks[1].id, t3.id);
         assert_eq!(tasks[2].id, t2.id);
@@ -1299,7 +1282,6 @@ mod tests {
 
         let done = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Done),
                 ..Default::default()
@@ -1365,7 +1347,6 @@ mod tests {
 
         let ready = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Ready),
                 ..Default::default()
@@ -1421,7 +1402,6 @@ mod tests {
 
         let ready = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Ready),
                 ..Default::default()
@@ -1459,7 +1439,6 @@ mod tests {
 
         let done = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Done),
                 ..Default::default()
@@ -1497,7 +1476,6 @@ mod tests {
 
         let icebox = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Icebox),
                 ..Default::default()
@@ -1530,7 +1508,7 @@ mod tests {
             .unwrap();
         }
 
-        let before: Vec<String> = list(&mut conn, bl.id, &ListFilter::default())
+        let before: Vec<String> = list(&mut conn, &ListFilter::default())
             .await
             .unwrap()
             .iter()
@@ -1540,9 +1518,7 @@ mod tests {
         let count = rebalance(&mut conn, bl.id).await.unwrap();
         assert_eq!(count, 3);
 
-        let after = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let after = list(&mut conn, &ListFilter::default()).await.unwrap();
         let after_positions: Vec<String> = after.iter().map(|t| t.position.clone()).collect();
 
         // Order preserved
@@ -1602,16 +1578,13 @@ mod tests {
         assert!(archived.archived);
 
         // Default list excludes archived
-        let visible = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let visible = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].key, t1.key);
 
         // include_archived shows all
         let all = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 include_archived: true,
                 ..Default::default()
@@ -1625,9 +1598,7 @@ mod tests {
         let restored = set_archived(&mut conn, t2.id, false).await.unwrap();
         assert!(!restored.archived);
 
-        let visible = list(&mut conn, bl.id, &ListFilter::default())
-            .await
-            .unwrap();
+        let visible = list(&mut conn, &ListFilter::default()).await.unwrap();
         assert_eq!(visible.len(), 2);
     }
 
@@ -1663,7 +1634,6 @@ mod tests {
 
         let results = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Ready),
                 tag: Some("bug".to_string()),
@@ -1676,12 +1646,35 @@ mod tests {
         assert_eq!(results[0].title, "Tagged ready");
     }
 
+    #[tokio::test]
+    async fn list_groups_backlogs_and_keeps_their_order() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        let one = backlog::create(&mut conn, "one").await.unwrap();
+        let two = backlog::create(&mut conn, "two").await.unwrap();
+        // Interleave creation so positions collide across backlogs.
+        for (title, bl) in [("a1", &one), ("b1", &two), ("a2", &one), ("b2", &two)] {
+            create(
+                &mut conn,
+                CreateTask {
+                    title,
+                    backlog_id: bl.id,
+                    state: None,
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(titles(&mut conn, "").await, ["a1", "a2", "b1", "b2"]);
+        assert_eq!(titles(&mut conn, "project:two").await, ["b1", "b2"]);
+    }
+
     // ---- filter term tests ----
 
-    async fn titles(conn: &mut SqliteConnection, backlog_id: i64, terms: &str) -> Vec<String> {
+    async fn titles(conn: &mut SqliteConnection, terms: &str) -> Vec<String> {
         list(
             conn,
-            backlog_id,
             &ListFilter {
                 terms: terms.parse().unwrap(),
                 ..Default::default()
@@ -1722,28 +1715,28 @@ mod tests {
         make("done bug", State::Done, &["bug"]).await;
 
         assert_eq!(
-            titles(&mut conn, bl.id, "project:ranger").await,
+            titles(&mut conn, "project:ranger").await,
             ["ranger bug", "ranger chore"]
         );
         assert_eq!(
-            titles(&mut conn, bl.id, "bug -project:ranger").await,
+            titles(&mut conn, "bug -project:ranger").await,
             ["dotfiles bug", "done bug"]
         );
         assert_eq!(
-            titles(&mut conn, bl.id, ":bug state:ready").await,
+            titles(&mut conn, ":bug state:ready").await,
             ["ranger bug", "dotfiles bug"]
         );
         assert_eq!(
-            titles(&mut conn, bl.id, "-state:ready -state:done").await,
+            titles(&mut conn, "-state:ready -state:done").await,
             ["ranger chore"]
         );
-        assert_eq!(titles(&mut conn, bl.id, "state:done").await, ["done bug"]);
+        assert_eq!(titles(&mut conn, "state:done").await, ["done bug"]);
         assert!(
-            titles(&mut conn, bl.id, "project:ranger -bug -state:icebox")
+            titles(&mut conn, "project:ranger -bug -state:icebox")
                 .await
                 .is_empty()
         );
-        assert_eq!(titles(&mut conn, bl.id, "").await.len(), 4);
+        assert_eq!(titles(&mut conn, "").await.len(), 4);
     }
 
     #[tokio::test]
@@ -1777,7 +1770,6 @@ mod tests {
 
         let results = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Ready),
                 terms: "-bug".parse().unwrap(),
@@ -1794,12 +1786,10 @@ mod tests {
     async fn list_rejects_state_with_state_term() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         for terms in ["state:ready", "-state:done"] {
             let err = list(
                 &mut conn,
-                bl.id,
                 &ListFilter {
                     state: Some(State::Ready),
                     terms: terms.parse().unwrap(),
@@ -1816,11 +1806,9 @@ mod tests {
     async fn list_rejects_invalid_tag_shorthand() {
         let pool = test_pool().await;
         let mut conn = pool.acquire().await.unwrap();
-        let bl = backlog::create(&mut conn, "Test").await.unwrap();
 
         let err = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 tag: Some("x:".to_string()),
                 ..Default::default()
@@ -1890,11 +1878,16 @@ mod tests {
         const TAGS: [&str; 5] = ["bug", "project:ranger", "project:dotfiles", ":a:b", "-x"];
 
         let task_count = tc.draw(gs::integers::<usize>().max_value(6));
-        let tasks: Vec<(State, Vec<&str>)> = (0..task_count)
+        // Tasks land in one of two backlogs, which tags them with its
+        // `project:` tag on top of any drawn ones.
+        const BACKLOGS: [&str; 2] = ["ranger", "dotfiles"];
+        let tasks: Vec<(usize, State, Vec<&str>)> = (0..task_count)
             .map(|_| {
+                let backlog = tc.draw(gs::integers::<usize>().max_value(1));
                 let state = tc.draw(gs::sampled_from(STATES.to_vec()));
-                let tags = tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(3));
-                (state, tags)
+                let mut tags = tc.draw(gs::vecs(gs::sampled_from(TAGS.to_vec())).max_size(3));
+                tags.push(["project:ranger", "project:dotfiles"][backlog]);
+                (backlog, state, tags)
             })
             .collect();
 
@@ -1931,7 +1924,7 @@ mod tests {
         let mut expected: Vec<String> = tasks
             .iter()
             .enumerate()
-            .filter(|(_, (state, tags))| filter.0.iter().all(|t| matches(state, tags, t)))
+            .filter(|(_, (_, state, tags))| filter.0.iter().all(|t| matches(state, tags, t)))
             .map(|(i, _)| format!("t{i}"))
             .collect();
         expected.sort();
@@ -1944,13 +1937,16 @@ mod tests {
             let dir = tempdir().unwrap();
             let pool = db::connect(&dir.path().join("test.db")).await.unwrap();
             let mut conn = pool.acquire().await.unwrap();
-            let bl = backlog::create(&mut conn, "Test").await.unwrap();
-            for (i, (state, tags)) in tasks.iter().enumerate() {
+            let mut bls = Vec::new();
+            for name in BACKLOGS {
+                bls.push(backlog::create(&mut conn, name).await.unwrap());
+            }
+            for (i, (bl, state, tags)) in tasks.iter().enumerate() {
                 let task = create(
                     &mut conn,
                     CreateTask {
                         title: &format!("t{i}"),
-                        backlog_id: bl.id,
+                        backlog_id: bls[*bl].id,
                         state: Some(state.clone()),
                         description: None,
                     },
@@ -1963,7 +1959,6 @@ mod tests {
             }
             list(
                 &mut conn,
-                bl.id,
                 &ListFilter {
                     terms: filter.clone(),
                     ..Default::default()
@@ -2150,7 +2145,6 @@ mod tests {
 
         let done = list(
             &mut conn,
-            bl.id,
             &ListFilter {
                 state: Some(State::Done),
                 ..Default::default()

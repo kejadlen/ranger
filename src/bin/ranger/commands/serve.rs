@@ -251,9 +251,10 @@ async fn render_board(
     ] {
         let filter = ListFilter {
             state: Some(s.clone()),
+            terms: Filter(vec![ops::backlog::project_term(&backlog.name)?]),
             ..Default::default()
         };
-        let tasks = ops::task::list(&mut conn, backlog.id, &filter).await?;
+        let tasks = ops::task::list(&mut conn, &filter).await?;
         let views = to_task_views(&tasks, &prefixes, &mut conn).await?;
         match s {
             ranger::models::State::InProgress => in_progress = views,
