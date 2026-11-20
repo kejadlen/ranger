@@ -39,6 +39,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(flatten)]
+    Db(DbCommands),
+    #[command(name = "__internal", hide = true)]
+    Internal {
+        #[command(subcommand)]
+        command: commands::internal::InternalCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum DbCommands {
     /// Manage backlogs
     #[command(visible_alias = "b")]
     Backlog {
@@ -99,39 +110,53 @@ fn main() -> miette::Result<()> {
     // which would panic if nested inside #[tokio::main].
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
+    let cli = Cli::parse();
+    let command = match cli.command {
+        Some(Commands::Internal { command }) => {
+            commands::internal::run(command);
+            return Ok(());
+        }
+        Some(Commands::Db(command)) => Some(command),
+        None => None,
+    };
+
+    output::init_color(cli.color);
+    let db_path = resolve_db_path(cli.db);
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .into_diagnostic()?
-        .block_on(async_main())
+        .block_on(async_main(db_path, cli.backlog, cli.json, command))
 }
 
-async fn async_main() -> miette::Result<()> {
-    let cli = Cli::parse();
-    output::init_color(cli.color);
-    let db_path = resolve_db_path(cli.db);
+async fn async_main(
+    db_path: PathBuf,
+    backlog: Option<String>,
+    json: bool,
+    command: Option<DbCommands>,
+) -> miette::Result<()> {
     let ranger = app::Ranger {
         pool: ranger::db::connect(&db_path).await?,
-        backlog: cli.backlog,
-        json: cli.json,
+        backlog,
+        json,
         editor: std::env::var("EDITOR").ok(),
     };
 
-    match cli.command {
-        Some(Commands::Backlog { command }) => {
+    match command {
+        Some(DbCommands::Backlog { command }) => {
             commands::backlog::run(&ranger, command).await?;
         }
-        Some(Commands::Task { filter, command }) => {
+        Some(DbCommands::Task { filter, command }) => {
             let filter = filter.unwrap_or_default();
             commands::task::run(&ranger, command, &filter).await?;
         }
-        Some(Commands::Comment { command }) => {
+        Some(DbCommands::Comment { command }) => {
             commands::comment::run(&ranger, command).await?;
         }
-        Some(Commands::Tag { command }) => {
+        Some(DbCommands::Tag { command }) => {
             commands::tag::run(&ranger, command).await?;
         }
-        Some(Commands::Serve { port }) => {
+        Some(DbCommands::Serve { port }) => {
             commands::serve::run(&ranger, port).await?;
         }
         None => {
