@@ -38,6 +38,7 @@ src/
     ├── main.rs          # Entrypoint, clap setup, DB path resolution
     ├── app.rs           # `Ranger`: pool and resolved settings passed to every command
     ├── output.rs        # Human/JSON output helpers
+    ├── skill.md         # Agent skill guide, printed by `ranger __internal skill`
     └── commands/        # One module per subcommand group
 migrations/              # SQL schema
 tests/

@@ -1042,3 +1042,19 @@ fn filters_narrow_the_default_filter() {
     // The default here is project:Ranger, which has no tasks.
     assert!(titles(&["task", "list", "--json", "--filter", "bug"]).is_empty());
 }
+
+#[test]
+fn internal_skill_prints_the_guide_without_touching_the_db() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let output = ranger(db.to_str().unwrap())
+        .args(["__internal", "skill"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        include_str!("../src/bin/ranger/skill.md")
+    );
+    assert!(!db.exists());
+}
