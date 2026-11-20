@@ -25,7 +25,7 @@ pub enum BacklogCommands {
     #[command(visible_alias = "s")]
     Show {
         /// Backlog name
-        #[arg(env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
+        #[arg(add = ArgValueCompleter::new(completions::complete_backlog_names))]
         name: String,
 
         /// Show only done tasks
@@ -117,8 +117,8 @@ pub async fn run(ranger: &Ranger, command: BacklogCommands) -> Result<(), Ranger
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let scope = ranger.key_scope(&Default::default());
-                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+                let scope = &ranger.filter;
+                let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
 
                 print_backlog_detail(&backlog);
 

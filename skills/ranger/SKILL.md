@@ -18,10 +18,10 @@ Commands use `ranger <noun> <verb>` structure. Top-level nouns: `backlog` (alias
 ranger backlog list                  # List all backlogs
 
 # Tasks
-ranger task create --backlog <name> "Title"   # Create a task
-ranger task create --backlog <name> --state ready --description "..." "Title"
-ranger task create --backlog <name> -B <other> "Title"   # Create already in position
-ranger task list --backlog <name>             # List tasks
+ranger task create --filter project:<name> "Title"   # Create a task
+ranger task create --filter project:<name> --state ready --description "..." "Title"
+ranger task create --filter project:<name> -B <other> "Title"   # Create already in position
+ranger task list --filter project:<name>     # List tasks
 ranger task list --state ready --tag bug      # Filter by state and/or tag
 ranger task list --filter "project:ranger -bug state:ready"   # Terms: tag, key:value, state:, leading - negates
 ranger task create --filter "project:ranger state:ready" "Title"   # Gets the filter's positive tags and first state
@@ -57,15 +57,15 @@ Every command needs its noun: `ranger task list`, never `ranger list`; `ranger t
 
 Ranger has no blocker or dependency model — there is no `ranger blocker`. Record a blocker as a comment on the task.
 
-Flags are spelled out in full: `--description`, not `--desc`; `--backlog` has no `-b` short form. `--backlog` works on every command.
+Flags are spelled out in full: `--description`, not `--desc`; `--filter` has no short form and works on every command.
 
 `-B`/`-A` work on `task create` and `task edit` too, so creating or editing in position needs no separate `task move`.
 
 `tag add` takes one tag per invocation — `ranger tag add <key> mirror config` fails on the second word.
 
-### Backlog scoping
+### Default filter
 
-The `RANGER_DEFAULT_BACKLOG` env var sets the default `--backlog` value so you can omit it. `--backlog` limits `tag list` to that backlog's tags, and task keys resolve against that backlog first, narrowed by `--filter` when given, so displayed prefixes stay short. When nothing there matches, the key is looked up across every backlog, so a key from another backlog still works without passing `--backlog`. `-B`/`-A` can anchor to a task in any backlog.
+The `RANGER_DEFAULT_FILTER` env var (or `--default-filter`) sets the filter every command works within, such as `project:ranger`. `--filter` narrows it rather than replacing it, so `--filter bug` under `project:ranger` means `project:ranger bug`. To step outside it, override the default: `RANGER_DEFAULT_FILTER= ranger task list` matches every task. The filter limits `task list` and `tag list`, gives new tasks its positive tags, and task keys resolve among matching tasks first, so displayed prefixes stay short. When nothing there matches, the key is looked up across every task, so a key from another project still works. `-B`/`-A` can anchor to any task.
 
 Task keys are short prefixes (e.g. `tl`) of longer IDs — use just enough to be unique. There is no `--top` or `--bottom` flag; to move to the top, use `-B` with the first task's key.
 
@@ -91,7 +91,7 @@ Top of the queue = most important. Bias toward quick wins — small easy tasks s
 - When creating or editing a task, review its tags. Add tags that apply (e.g. `bug`, area tags) and remove ones that no longer fit so `ranger task list` filters stay useful.
 - Leave a comment on the task when something comes up that future-you (or the next picker-upper) would want to know but that doesn't belong in a commit message: a decision made along the way, a blocker hit, a follow-up deferred, what you tried and ruled out, where you left off when stopping mid-task, or research and feasibility findings worked out before implementation starts. Commits explain the change that landed; comments explain the trail around it — including the trail leading *up to* it. Comment bodies can be multi-line (pass a heredoc); structure and newlines are preserved.
 - When archiving a task, add a comment explaining why (`ranger comment add <key> "..."`) — superseded by which tasks, decided against for what reason. The reason is the point of preserving history.
-- When you encounter a bug in ranger during other work, file it in the ranger backlog (`--backlog ranger`) and tag it `bug`. Include what you observed, the expected behavior, and how to reproduce it in the description. Don't fix it inline — continue with the original task unless the bug blocks it.
+- When you encounter a bug in ranger during other work, file it in the ranger project (`--default-filter project:ranger`) and tag it `bug`. Include what you observed, the expected behavior, and how to reproduce it in the description. Don't fix it inline — continue with the original task unless the bug blocks it.
 
 ---
 

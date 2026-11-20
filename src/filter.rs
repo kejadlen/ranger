@@ -43,6 +43,12 @@ impl Filter {
         })
     }
 
+    /// The conjunction of both filters: this one's terms, then `other`'s.
+    pub fn and(mut self, other: Filter) -> Filter {
+        self.0.extend(other.0);
+        self
+    }
+
     /// Whether any term, positive or negated, constrains the state.
     pub fn has_state_term(&self) -> bool {
         self.0
@@ -234,6 +240,13 @@ mod tests {
                 term(true, Matcher::State(State::Done)),
             ]
         );
+    }
+
+    #[test]
+    fn and_appends_terms() {
+        let a: Filter = "project:ranger".parse().unwrap();
+        let b: Filter = "-bug state:ready".parse().unwrap();
+        assert_eq!(a.and(b).to_string(), "project:ranger -bug state:ready");
     }
 
     #[test]

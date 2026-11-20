@@ -156,10 +156,11 @@ pub enum TaskCommands {
     },
 }
 
-pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Result<(), Error> {
+pub async fn run(ranger: &Ranger, command: TaskCommands) -> Result<(), Error> {
     let pool = &ranger.pool;
     let json = ranger.json;
-    let scope = ranger.key_scope(filter);
+    let filter = &ranger.filter;
+    let scope = filter;
 
     match command {
         TaskCommands::Create {
@@ -174,11 +175,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
 
             let mut tx = pool.begin().await?;
 
-            let backlog = ranger.backlog.as_deref().ok_or_else(|| {
-                Error::Usage("task create needs --backlog or RANGER_DEFAULT_BACKLOG".to_string())
-            })?;
-            let bl = ops::backlog::get_by_name(&mut tx, backlog).await?;
-            let anchors = position.resolve(&mut tx, &scope).await?;
+            let anchors = position.resolve(&mut tx, scope).await?;
 
             let task = ops::task::create(
                 &mut tx,
@@ -190,7 +187,6 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
             )
             .await?;
 
-            ops::tag::add(&mut tx, task.id, &ops::backlog::project_tag(&bl.name)).await?;
             for tag in filter.tags() {
                 ops::tag::add(&mut tx, task.id, &tag.to_string()).await?;
             }
@@ -202,7 +198,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
             tx.commit().await?;
 
             let mut conn = pool.acquire().await?;
-            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+            let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             output::print(&task, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::List {
@@ -211,27 +207,21 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
             archived,
         } => {
             let mut conn = pool.acquire().await?;
-            let mut filter = ListFilter {
+            let filter = ListFilter {
                 state,
                 include_archived: archived,
                 tag,
                 terms: filter.clone(),
             };
 
-            // The note echoes the user's terms, naming the backlog separately.
-            let backlog = ranger.backlog.as_deref();
-            let note = empty_task_note(&filter, backlog);
-            if let Some(name) = backlog {
-                ops::backlog::get_by_name(&mut conn, name).await?;
-                filter.terms.0.insert(0, ops::backlog::project_term(name)?);
-            }
-            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+            let note = empty_task_note(&filter);
+            let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             let tasks = ops::task::list(&mut conn, &filter).await?;
             output::print_list(&tasks, json, &note, |t| print_task(t, &prefixes));
         }
         TaskCommands::Show { key } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, scope).await?;
             let comments = ops::comment::list(&mut conn, task.id).await?;
             let tags = ops::tag::list_for_task(&mut conn, task.id).await?;
 
@@ -243,7 +233,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
                 });
                 println!("{}", serde_json::to_string_pretty(&detail).unwrap());
             } else {
-                let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+                let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
 
                 print_task_detail(&task, &prefixes);
                 if !tags.is_empty() {
@@ -267,7 +257,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
             position,
         } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, scope).await?;
 
             let updated = if title.is_none()
                 && description.is_none()
@@ -277,7 +267,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
             {
                 edit_in_editor(&mut conn, ranger.editor.as_deref(), &task).await?
             } else {
-                let anchors = position.resolve(&mut conn, &scope).await?;
+                let anchors = position.resolve(&mut conn, scope).await?;
                 let updated = ops::task::edit(
                     &mut conn,
                     task.id,
@@ -293,18 +283,18 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
                 updated
             };
 
-            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+            let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             output::print(&updated, json, |t| print_task(t, &prefixes));
         }
         TaskCommands::Move { key, position } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
-            let anchors = position.resolve(&mut conn, &scope).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, scope).await?;
+            let anchors = position.resolve(&mut conn, scope).await?;
 
             match anchors {
                 Some(anchors) => {
                     ops::task::move_task(&mut conn, &task, anchors.as_placement()).await?;
-                    let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+                    let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
                     output::print(&task, json, |t| {
                         println!(
                             "Moved {} {}",
@@ -320,7 +310,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
         }
         TaskCommands::Delete { key, yes } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, scope).await?;
 
             if !yes {
                 let prompt = format!("Delete task '{}'?", task.title);
@@ -339,7 +329,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
                 }
             }
 
-            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+            let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             ops::task::delete(&mut conn, task.id).await?;
             output::print(&task, json, |t| {
                 println!(
@@ -351,9 +341,9 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
         }
         TaskCommands::Archive { key } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, scope).await?;
             let updated = ops::task::set_archived(&mut conn, task.id, true).await?;
-            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+            let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             output::print(&updated, json, |t| {
                 println!(
                     "Archived {} {}",
@@ -364,9 +354,9 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
         }
         TaskCommands::Unarchive { key } => {
             let mut conn = pool.acquire().await?;
-            let task = ops::task::get_by_key_prefix(&mut conn, &key, &scope).await?;
+            let task = ops::task::get_by_key_prefix(&mut conn, &key, scope).await?;
             let updated = ops::task::set_archived(&mut conn, task.id, false).await?;
-            let prefixes = ops::task::prefix_lengths(&mut conn, &scope).await?;
+            let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             output::print(&updated, json, |t| {
                 println!(
                     "Unarchived {} {}",
@@ -380,7 +370,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
 }
 
 /// Describe an empty `task list` result, echoing the filters that were applied.
-fn empty_task_note(filter: &ListFilter, backlog: Option<&str>) -> String {
+fn empty_task_note(filter: &ListFilter) -> String {
     let mut note = String::from("No ");
     if let Some(state) = &filter.state {
         note.push_str(&state.as_str().replace('_', "-"));
@@ -394,11 +384,6 @@ fn empty_task_note(filter: &ListFilter, backlog: Option<&str>) -> String {
     if !filter.terms.0.is_empty() {
         note.push_str(" matching '");
         note.push_str(&filter.terms.to_string());
-        note.push('\'');
-    }
-    if let Some(name) = backlog {
-        note.push_str(" in backlog '");
-        note.push_str(name);
         note.push('\'');
     }
     note.push('.');
