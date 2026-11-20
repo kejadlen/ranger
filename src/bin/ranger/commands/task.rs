@@ -184,13 +184,13 @@ pub async fn run(ranger: &Ranger, command: TaskCommands, filter: &Filter) -> Res
                 &mut tx,
                 ops::task::CreateTask {
                     title: &title,
-                    backlog_id: bl.id,
                     state: state.or_else(|| filter.state().cloned()),
                     description: description.as_deref(),
                 },
             )
             .await?;
 
+            ops::tag::add(&mut tx, task.id, &ops::backlog::project_tag(&bl.name)).await?;
             for tag in filter.tags() {
                 ops::tag::add(&mut tx, task.id, &tag.to_string()).await?;
             }

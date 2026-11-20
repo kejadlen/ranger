@@ -42,12 +42,8 @@ pub enum BacklogCommands {
         #[arg(long, short = 'y')]
         yes: bool,
     },
-    /// Rebalance task positions in a backlog
-    Rebalance {
-        /// Backlog name
-        #[arg(env = "RANGER_DEFAULT_BACKLOG", add = ArgValueCompleter::new(completions::complete_backlog_names))]
-        name: String,
-    },
+    /// Respace every task's position, keeping their order
+    Rebalance,
 }
 
 pub async fn run(ranger: &Ranger, command: BacklogCommands) -> Result<(), RangerError> {
@@ -83,14 +79,13 @@ pub async fn run(ranger: &Ranger, command: BacklogCommands) -> Result<(), Ranger
                 println!("Deleted backlog: {}", b.name)
             });
         }
-        BacklogCommands::Rebalance { name } => {
-            let backlog = ops::backlog::get_by_name(&mut conn, &name).await?;
-            let count = ops::task::rebalance(&mut conn, backlog.id).await?;
+        BacklogCommands::Rebalance => {
+            let count = ops::task::rebalance(&mut conn).await?;
             if ranger.json {
-                let value = serde_json::json!({ "backlog": name, "rebalanced": count });
+                let value = serde_json::json!({ "rebalanced": count });
                 println!("{}", serde_json::to_string_pretty(&value).unwrap());
             } else {
-                println!("Rebalanced {count} tasks in {name}");
+                println!("Rebalanced {count} tasks");
             }
         }
         BacklogCommands::Show { name, done } => {

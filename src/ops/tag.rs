@@ -1,4 +1,5 @@
 use crate::error::RangerError;
+use crate::filter::Filter;
 use crate::models::{Tag, TagParts};
 use sqlx::SqliteConnection;
 
@@ -110,20 +111,23 @@ pub async fn prune(conn: &mut SqliteConnection, dry_run: bool) -> Result<Vec<Tag
     Ok(orphaned)
 }
 
-/// List tags used by tasks in a specific backlog.
-pub async fn list_for_backlog(
+/// List the tags used by tasks matching `scope`.
+pub async fn list_used_by(
     conn: &mut SqliteConnection,
-    backlog_id: i64,
+    scope: &Filter,
 ) -> Result<Vec<Tag>, RangerError> {
-    Ok(sqlx::query_as::<_, Tag>(&format!(
+    let (clause, binds) = crate::ops::task::terms_sql(&scope.0);
+    let query = format!(
         "SELECT DISTINCT {TAG_COLUMNS} FROM tags t \
              JOIN task_tags tt ON t.id = tt.tag_id \
-             JOIN tasks tk ON tt.task_id = tk.id \
-             WHERE tk.backlog_id = ? ORDER BY name"
-    ))
-    .bind(backlog_id)
-    .fetch_all(&mut *conn)
-    .await?)
+             JOIN tasks ON tt.task_id = tasks.id \
+             WHERE 1{clause} ORDER BY name"
+    );
+    let mut q = sqlx::query_as::<_, Tag>(&query);
+    for bind in binds {
+        q = q.bind(bind);
+    }
+    Ok(q.fetch_all(&mut *conn).await?)
 }
 
 #[cfg(test)]
@@ -138,28 +142,16 @@ mod tests {
         tags.into_iter().filter(|t| t.key != "project").collect()
     }
 
-    #[tokio::test]
-    async fn new_tasks_carry_their_backlog_project_tag() {
-        let (pool, task_id, _dir) = setup().await;
-        let mut conn = pool.acquire().await.unwrap();
-
-        let tags = list_for_task(&mut conn, task_id).await.unwrap();
-        assert_eq!(tags.len(), 1);
-        assert_eq!(tags[0].name, "project:Test");
-    }
-
     async fn setup() -> (sqlx::SqlitePool, i64, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::connect(&dir.path().join("test.db"))
             .await
             .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        let backlog = ops::backlog::create(&mut conn, "Test").await.unwrap();
         let task = ops::task::create(
             &mut conn,
             CreateTask {
                 title: "Test task",
-                backlog_id: backlog.id,
                 state: None,
                 description: None,
             },
@@ -181,7 +173,6 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Alpha task",
-                backlog_id: bl1.id,
                 state: None,
                 description: None,
             },
@@ -192,13 +183,14 @@ mod tests {
             &mut conn,
             CreateTask {
                 title: "Beta task",
-                backlog_id: bl2.id,
                 state: None,
                 description: None,
             },
         )
         .await
         .unwrap();
+        add(&mut conn, t1.id, "project:Alpha").await.unwrap();
+        add(&mut conn, t2.id, "project:Beta").await.unwrap();
         (pool, bl1.id, bl2.id, t1.id, t2.id, dir)
     }
 
@@ -350,12 +342,10 @@ mod tests {
         let (pool, task_id, _dir) = setup().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        let backlog = ops::backlog::get_by_name(&mut conn, "Test").await.unwrap();
         let task2 = ops::task::create(
             &mut conn,
             CreateTask {
                 title: "Second task",
-                backlog_id: backlog.id,
                 state: None,
                 description: None,
             },
@@ -378,8 +368,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_for_backlog_scopes_to_backlog() {
-        let (pool, bl1_id, bl2_id, t1_id, t2_id, _dir) = setup_two_backlogs().await;
+    async fn list_used_by_scopes_to_matching_tasks() {
+        let (pool, _bl1_id, _bl2_id, t1_id, t2_id, _dir) = setup_two_backlogs().await;
         let mut conn = pool.acquire().await.unwrap();
 
         add(&mut conn, t1_id, "frontend").await.unwrap();
@@ -388,14 +378,22 @@ mod tests {
         add(&mut conn, t1_id, "urgent").await.unwrap();
         add(&mut conn, t2_id, "urgent").await.unwrap();
 
-        let alpha_tags = user_tags(list_for_backlog(&mut conn, bl1_id).await.unwrap());
+        let alpha_tags = user_tags(
+            list_used_by(&mut conn, &"project:Alpha".parse().unwrap())
+                .await
+                .unwrap(),
+        );
         assert_eq!(alpha_tags.len(), 2);
         let alpha_names: Vec<&str> = alpha_tags.iter().map(|t| t.name.as_str()).collect();
         assert!(alpha_names.contains(&"frontend"));
         assert!(alpha_names.contains(&"urgent"));
         assert!(!alpha_names.contains(&"backend"));
 
-        let beta_tags = user_tags(list_for_backlog(&mut conn, bl2_id).await.unwrap());
+        let beta_tags = user_tags(
+            list_used_by(&mut conn, &"project:Beta".parse().unwrap())
+                .await
+                .unwrap(),
+        );
         assert_eq!(beta_tags.len(), 2);
         let beta_names: Vec<&str> = beta_tags.iter().map(|t| t.name.as_str()).collect();
         assert!(beta_names.contains(&"backend"));
@@ -404,11 +402,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_for_backlog_empty_backlog() {
-        let (pool, bl1_id, _bl2_id, _t1_id, _t2_id, _dir) = setup_two_backlogs().await;
+    async fn list_used_by_empty_scope_match() {
+        let (pool, _bl1_id, _bl2_id, _t1_id, _t2_id, _dir) = setup_two_backlogs().await;
         let mut conn = pool.acquire().await.unwrap();
 
-        let tags = user_tags(list_for_backlog(&mut conn, bl1_id).await.unwrap());
+        let tags = user_tags(
+            list_used_by(&mut conn, &"project:Alpha".parse().unwrap())
+                .await
+                .unwrap(),
+        );
         assert!(tags.is_empty());
     }
 

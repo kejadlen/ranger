@@ -9,8 +9,6 @@ pub enum RangerError {
         task_state: String,
         anchor_state: String,
     },
-    #[error("can't move a task relative to a task in another backlog")]
-    BacklogMismatch,
     #[error("backlog not found: '{0}'")]
     BacklogNotFound(String),
     #[error(transparent)]
