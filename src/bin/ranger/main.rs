@@ -69,12 +69,6 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum DbCommands {
-    /// Manage backlogs
-    #[command(visible_alias = "b")]
-    Backlog {
-        #[command(subcommand)]
-        command: commands::backlog::BacklogCommands,
-    },
     /// Manage tasks
     #[command(visible_alias = "t")]
     Task {
@@ -160,9 +154,6 @@ async fn async_main(
     };
 
     match command {
-        Some(DbCommands::Backlog { command }) => {
-            commands::backlog::run(&ranger, command).await?;
-        }
         Some(DbCommands::Task { command }) => {
             commands::task::run(&ranger, command).await?;
         }

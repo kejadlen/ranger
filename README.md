@@ -37,7 +37,7 @@ Tags replace projects. Filter any backlog by tag to see a focused slice of work.
 
 ### Interface
 
-`ranger serve` starts a web server on port 3000 that renders a backlog as a board. Tasks in the ready and icebox columns drag to reorder; everything else is read-only for now. Design is minimalist, built with [Utopia](https://utopia.fyi/) fluid responsive CSS.
+`ranger serve` starts a web server on port 3000 that renders the tasks matching the default filter as a board, with a picker for each `project:` tag and `?filter=` for anything else. Tasks in the ready and icebox columns drag to reorder; everything else is read-only for now. Design is minimalist, built with [Utopia](https://utopia.fyi/) fluid responsive CSS.
 
 ## Getting Started
 
@@ -56,7 +56,6 @@ cargo run --bin ranger -- <command>
 ### Quick start
 
 ```
-ranger backlog create "my-project"
 ranger task create "First thing to do" --filter project:my-project
 ranger task create "Second thing" --filter project:my-project --state ready
 ranger task list --filter project:my-project
@@ -66,7 +65,7 @@ ranger comment add <key> "Started working on this"
 ranger task show <key>
 ```
 
-Use `--json` on any command for machine-readable output. Backlogs are identified by name. Tasks are referenced by key prefix — type just enough characters to be unique.
+Use `--json` on any command for machine-readable output. A project is a `project:<name>` tag. Tasks are referenced by key prefix — type just enough characters to be unique.
 
 Set `RANGER_DEFAULT_FILTER` (for example to `project:my-project`) to work within those terms on every command. `--filter` narrows it.
 

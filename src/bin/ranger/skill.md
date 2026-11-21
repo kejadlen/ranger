@@ -6,11 +6,11 @@ All work must correspond to a task in the backlog. If the user asks for somethin
 
 ## Quick Reference
 
-Commands use `ranger <noun> <verb>` structure. Top-level nouns: `backlog` (alias `b`), `task` (alias `t`), `comment` (alias `c`), `tag` (alias `g`).
+Commands use `ranger <noun> <verb>` structure. Top-level nouns: `task` (alias `t`), `comment` (alias `c`), `tag` (alias `g`).
 
 ```bash
-# Backlogs
-ranger backlog list                  # List all backlogs
+# Projects are `project:<name>` tags; there's no separate backlog command
+ranger tag list --all                # Every tag, including each project:<name>
 
 # Tasks
 ranger task create --filter project:<name> "Title"   # Create a task
@@ -28,6 +28,7 @@ ranger task move <key> -B <other>             # Reorder: place before another ta
 ranger task move <key> -A <other>             # Reorder: place after another task
 ranger task archive <key>                     # Archive a task (hide without deleting)
 ranger task unarchive <key>                   # Restore an archived task
+ranger task rebalance                        # Respace every position, keeping the order
 ranger task delete <key>                      # Delete a task entirely (rare — see Conventions)
 ```
 
@@ -42,7 +43,7 @@ Tags are created automatically — there's no `tag create` command. The first `r
 ```bash
 ranger tag add <task-key> <tag-name>         # Add a tag (creates it if new)
 ranger tag remove <task-key> <tag-name>      # Remove a tag from a task (alias: rm)
-ranger tag list                              # List tags in the current backlog
+ranger tag list                              # List tags used by tasks the filter matches
 ranger tag prune                             # Remove tags no longer attached to any task
 ```
 
@@ -77,7 +78,7 @@ Top of the queue = most important. Bias toward quick wins — small easy tasks s
 
 - **Done means committed.** The transition to done happens *after* `jj commit` (or equivalent) succeeds — never before, never "I'll commit in a sec." If the change isn't in version control, the task isn't done.
 - **Archive** when a task won't be done — ideas decided against, or seed tasks that have been superseded by more concrete tasks broken out of them. Archive preserves history; the task can still be referenced and unarchived later.
-- **Delete** is a last resort, reserved for tasks created in error (typo duplicates, wrong backlog, accidental). Prefer archive so the trail stays intact.
+- **Delete** is a last resort, reserved for tasks created in error (typo duplicates, wrong project, accidental). Prefer archive so the trail stays intact.
 
 ## Workflow
 
