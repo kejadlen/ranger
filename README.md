@@ -57,9 +57,9 @@ cargo run --bin ranger -- <command>
 
 ```
 ranger backlog create "my-project"
-ranger task create "First thing to do" --backlog my-project
-ranger task create "Second thing" --backlog my-project --state ready
-ranger task list --backlog my-project
+ranger task create "First thing to do" --filter project:my-project
+ranger task create "Second thing" --filter project:my-project --state ready
+ranger task list --filter project:my-project
 ranger tag add <key> urgent
 ranger task edit <key> --state in_progress
 ranger comment add <key> "Started working on this"
@@ -68,7 +68,7 @@ ranger task show <key>
 
 Use `--json` on any command for machine-readable output. Backlogs are identified by name. Tasks are referenced by key prefix — type just enough characters to be unique.
 
-Set `RANGER_DEFAULT_BACKLOG` to skip `--backlog` on every command.
+Set `RANGER_DEFAULT_FILTER` (for example to `project:my-project`) to work within those terms on every command. `--filter` narrows it.
 
 The database lives at `$XDG_DATA_HOME/ranger/ranger.db` by default. Override with `--db <path>` or `RANGER_DB` env var.
 

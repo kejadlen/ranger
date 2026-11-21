@@ -4,7 +4,6 @@ mod completions;
 mod output;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use clap_complete::engine::ArgValueCompleter;
 use miette::IntoDiagnostic;
 use std::path::PathBuf;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -27,11 +26,31 @@ struct Cli {
     #[arg(long, env = "RANGER_DB", global = true)]
     db: Option<PathBuf>,
 
-    /// Backlog to work in. `task create` adds tasks to it, `task list`
-    /// lists it, task keys resolve within it first, and a bare `ranger`
-    /// shows it.
-    #[arg(long, env = "RANGER_DEFAULT_BACKLOG", global = true, add = ArgValueCompleter::new(completions::complete_backlog_names))]
-    backlog: Option<String>,
+    /// Filter terms to work within, usually set through the env var.
+    /// `--filter` narrows it, and an empty value matches every task.
+    /// Example: RANGER_DEFAULT_FILTER=project:ranger
+    #[arg(
+        long,
+        env = "RANGER_DEFAULT_FILTER",
+        global = true,
+        allow_hyphen_values = true
+    )]
+    default_filter: Option<ranger::filter::Filter>,
+
+    /// Deprecated: the backlog whose `project:` tag is the default filter
+    /// when RANGER_DEFAULT_FILTER isn't set.
+    #[arg(long, env = "RANGER_DEFAULT_BACKLOG", global = true, hide = true)]
+    default_backlog: Option<String>,
+
+    /// Space-separated filter terms: `bug` or `key:value` for a tag,
+    /// `state:<state>` for a state, and a leading `-` to negate. Together
+    /// with the default filter, `task list` shows only tasks matching every
+    /// term, `task create` adds the positive tags and takes the first
+    /// positive state, `tag list` shows the tags matching tasks use, and
+    /// task keys resolve among matching tasks first.
+    /// Example: --filter "project:ranger -bug"
+    #[arg(long, global = true, allow_hyphen_values = true)]
+    filter: Option<ranger::filter::Filter>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -59,14 +78,6 @@ enum DbCommands {
     /// Manage tasks
     #[command(visible_alias = "t")]
     Task {
-        /// Space-separated filter terms: `bug` or `key:value` for a tag,
-        /// `state:<state>` for a state, and a leading `-` to negate. `list`
-        /// shows only tasks matching every term; `create` adds the positive
-        /// tags and takes the first positive state. Task keys resolve among
-        /// the matching tasks first.
-        /// Example: --filter "project:ranger -bug"
-        #[arg(long, global = true, allow_hyphen_values = true)]
-        filter: Option<ranger::filter::Filter>,
         #[command(subcommand)]
         command: commands::task::TaskCommands,
     },
@@ -122,22 +133,28 @@ fn main() -> miette::Result<()> {
 
     output::init_color(cli.color);
     let db_path = resolve_db_path(cli.db);
+    let (default_filter, warning) =
+        app::default_filter(cli.default_filter, cli.default_backlog.as_deref());
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
+    }
+    let filter = default_filter.and(cli.filter.unwrap_or_default());
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .into_diagnostic()?
-        .block_on(async_main(db_path, cli.backlog, cli.json, command))
+        .block_on(async_main(db_path, filter, cli.json, command))
 }
 
 async fn async_main(
     db_path: PathBuf,
-    backlog: Option<String>,
+    filter: ranger::filter::Filter,
     json: bool,
     command: Option<DbCommands>,
 ) -> miette::Result<()> {
     let ranger = app::Ranger {
         pool: ranger::db::connect(&db_path).await?,
-        backlog,
+        filter,
         json,
         editor: std::env::var("EDITOR").ok(),
     };
@@ -146,9 +163,8 @@ async fn async_main(
         Some(DbCommands::Backlog { command }) => {
             commands::backlog::run(&ranger, command).await?;
         }
-        Some(DbCommands::Task { filter, command }) => {
-            let filter = filter.unwrap_or_default();
-            commands::task::run(&ranger, command, &filter).await?;
+        Some(DbCommands::Task { command }) => {
+            commands::task::run(&ranger, command).await?;
         }
         Some(DbCommands::Comment { command }) => {
             commands::comment::run(&ranger, command).await?;
@@ -160,15 +176,13 @@ async fn async_main(
             commands::serve::run(&ranger, port).await?;
         }
         None => {
-            // No subcommand: show the default backlog, or list them all
-            let command = match &ranger.backlog {
-                Some(name) => commands::backlog::BacklogCommands::Show {
-                    name: name.clone(),
-                    done: false,
-                },
-                None => commands::backlog::BacklogCommands::List,
+            // No subcommand: list the tasks the filter matches.
+            let command = commands::task::TaskCommands::List {
+                state: None,
+                tag: None,
+                archived: false,
             };
-            commands::backlog::run(&ranger, command).await?;
+            commands::task::run(&ranger, command).await?;
         }
     }
 

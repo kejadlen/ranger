@@ -5,7 +5,7 @@ use tempfile::tempdir;
 fn ranger(db_path: &str) -> Command {
     let mut cmd = Command::from(cargo_bin_cmd!("ranger"));
     cmd.env("RANGER_DB", db_path);
-    cmd.env("RANGER_DEFAULT_BACKLOG", "Ranger");
+    cmd.env("RANGER_DEFAULT_FILTER", "project:Ranger");
     cmd
 }
 
@@ -176,7 +176,7 @@ fn full_workflow() {
     let backlogs: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(backlogs[0]["name"], "Ranger");
 
-    // Create tasks (using RANGER_DEFAULT_BACKLOG)
+    // Create tasks (using RANGER_DEFAULT_FILTER)
     let output = ranger(db_path)
         .args(["task", "create", "First task", "--state", "ready"])
         .output()
@@ -394,32 +394,19 @@ fn full_workflow() {
     let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(tasks.as_array().unwrap().len(), 3);
 
-    // No-args with RANGER_DEFAULT_BACKLOG shows the default backlog
-    let output = ranger(db_path).output().unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Ranger"));
-    // Should show task state sections
-    assert!(
-        stdout.contains("[in_progress]")
-            || stdout.contains("[ready]")
-            || stdout.contains("[icebox]")
-    );
-
-    // No-args with JSON flag
+    // No args lists the tasks the default filter matches.
     let output = ranger(db_path).args(["--json"]).output().unwrap();
     assert!(output.status.success());
-    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(detail["backlog"]["name"], "Ranger");
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 3);
 
-    // No-args without RANGER_DEFAULT_BACKLOG lists all backlogs
-    let mut cmd = Command::from(cargo_bin_cmd!("ranger"));
-    cmd.env("RANGER_DB", db_path);
-    cmd.env_remove("RANGER_DEFAULT_BACKLOG");
-    let output = cmd.output().unwrap();
+    // An empty default filter matches every task.
+    let output = ranger(db_path)
+        .env("RANGER_DEFAULT_FILTER", "")
+        .args(["task", "list", "--json"])
+        .output()
+        .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Ranger"));
 
     // Mark a task as done for the --done test
     let output = ranger(db_path)
@@ -453,7 +440,10 @@ fn full_workflow() {
     );
 
     // Backlog show hides done tasks by default
-    let output = ranger(db_path).args(["backlog", "show"]).output().unwrap();
+    let output = ranger(db_path)
+        .args(["backlog", "show", "Ranger"])
+        .output()
+        .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
@@ -463,7 +453,7 @@ fn full_workflow() {
 
     // Backlog show --done shows only done tasks
     let output = ranger(db_path)
-        .args(["backlog", "show", "--done"])
+        .args(["backlog", "show", "Ranger", "--done"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -484,7 +474,7 @@ fn full_workflow() {
 
     // Backlog show --done with JSON shows only done tasks
     let output = ranger(db_path)
-        .args(["backlog", "show", "--done", "--json"])
+        .args(["backlog", "show", "Ranger", "--done", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -495,7 +485,7 @@ fn full_workflow() {
 
     // Backlog show JSON without --done excludes done tasks
     let output = ranger(db_path)
-        .args(["backlog", "show", "--json"])
+        .args(["backlog", "show", "Ranger", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -584,7 +574,7 @@ fn full_workflow() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert_eq!(
         stderr.trim(),
-        "No tasks matching 'frontend -bug' in backlog 'Ranger'."
+        "No tasks matching 'project:Ranger frontend -bug'."
     );
 
     // Creating under a filter adds its positive tags and first state
@@ -685,7 +675,13 @@ fn full_workflow() {
         .output()
         .unwrap();
     ranger(db_path)
-        .args(["task", "create", "Doomed task", "--backlog", "Throwaway"])
+        .args([
+            "task",
+            "create",
+            "Doomed task",
+            "--default-filter",
+            "project:Throwaway",
+        ])
         .output()
         .unwrap();
     let output = ranger(db_path)
@@ -778,7 +774,7 @@ fn empty_list_prints_note_on_stderr() {
 
     // Plain empty: note on stderr, stdout stays clean for pipes.
     let output = ranger(db_path)
-        .args(["task", "list", "--backlog", "Empty"])
+        .args(["task", "list", "--default-filter", "project:Empty"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -788,24 +784,31 @@ fn empty_list_prints_note_on_stderr() {
     );
     assert_eq!(
         String::from_utf8(output.stderr).unwrap().trim(),
-        "No tasks in backlog 'Empty'."
+        "No tasks matching 'project:Empty'."
     );
 
     // State filter: adjective form, with snake_case rendered as hyphenated.
     let output = ranger(db_path)
-        .args(["task", "list", "--backlog", "Empty", "--state", "ready"])
+        .args([
+            "task",
+            "list",
+            "--default-filter",
+            "project:Empty",
+            "--state",
+            "ready",
+        ])
         .output()
         .unwrap();
     assert_eq!(
         String::from_utf8(output.stderr).unwrap().trim(),
-        "No ready tasks in backlog 'Empty'."
+        "No ready tasks matching 'project:Empty'."
     );
     let output = ranger(db_path)
         .args([
             "task",
             "list",
-            "--backlog",
-            "Empty",
+            "--default-filter",
+            "project:Empty",
             "--state",
             "in_progress",
         ])
@@ -813,17 +816,24 @@ fn empty_list_prints_note_on_stderr() {
         .unwrap();
     assert_eq!(
         String::from_utf8(output.stderr).unwrap().trim(),
-        "No in-progress tasks in backlog 'Empty'."
+        "No in-progress tasks matching 'project:Empty'."
     );
 
     // Tag filter only.
     let output = ranger(db_path)
-        .args(["task", "list", "--backlog", "Empty", "--tag", "bug"])
+        .args([
+            "task",
+            "list",
+            "--default-filter",
+            "project:Empty",
+            "--tag",
+            "bug",
+        ])
         .output()
         .unwrap();
     assert_eq!(
         String::from_utf8(output.stderr).unwrap().trim(),
-        "No tasks tagged #bug in backlog 'Empty'."
+        "No tasks tagged #bug matching 'project:Empty'."
     );
 
     // State + tag together.
@@ -831,8 +841,8 @@ fn empty_list_prints_note_on_stderr() {
         .args([
             "task",
             "list",
-            "--backlog",
-            "Empty",
+            "--default-filter",
+            "project:Empty",
             "--state",
             "ready",
             "--tag",
@@ -842,12 +852,18 @@ fn empty_list_prints_note_on_stderr() {
         .unwrap();
     assert_eq!(
         String::from_utf8(output.stderr).unwrap().trim(),
-        "No ready tasks tagged #bug in backlog 'Empty'."
+        "No ready tasks tagged #bug matching 'project:Empty'."
     );
 
     // JSON mode keeps printing [] and emits no note.
     let output = ranger(db_path)
-        .args(["task", "list", "--backlog", "Empty", "--json"])
+        .args([
+            "task",
+            "list",
+            "--default-filter",
+            "project:Empty",
+            "--json",
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -856,7 +872,7 @@ fn empty_list_prints_note_on_stderr() {
 
     // The all-tasks path (no backlog filter) on a DB whose only backlog is empty.
     let output = ranger(db_path)
-        .env_remove("RANGER_DEFAULT_BACKLOG")
+        .env_remove("RANGER_DEFAULT_FILTER")
         .args(["task", "list"])
         .output()
         .unwrap();
@@ -931,8 +947,8 @@ fn keys_resolve_outside_the_default_backlog() {
             "task",
             "create",
             "Elsewhere",
-            "--backlog",
-            "Other",
+            "--default-filter",
+            "project:Other",
             "--json",
         ])
         .output()
@@ -941,7 +957,7 @@ fn keys_resolve_outside_the_default_backlog() {
     let task: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let key = task["key"].as_str().unwrap();
 
-    // RANGER_DEFAULT_BACKLOG is Ranger, but the key still resolves.
+    // RANGER_DEFAULT_FILTER is Ranger, but the key still resolves.
     ranger(db_path)
         .args(["task", "edit", key, "--title", "Found"])
         .assert()
@@ -955,24 +971,22 @@ fn keys_resolve_outside_the_default_backlog() {
 }
 
 #[test]
-fn create_needs_a_backlog() {
+fn create_without_a_filter_adds_no_tags() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let output = ranger(db.to_str().unwrap())
-        .env_remove("RANGER_DEFAULT_BACKLOG")
-        .args(["task", "create", "Homeless"])
+        .env_remove("RANGER_DEFAULT_FILTER")
+        .args(["task", "create", "Loose", "--json"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("task create needs --backlog or RANGER_DEFAULT_BACKLOG")
-    );
+    assert!(output.status.success());
+    let task: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let detail = task_detail(db.to_str().unwrap(), task["key"].as_str().unwrap());
+    assert_eq!(detail["tags"], serde_json::json!([]));
 }
 
 #[test]
-fn backlog_flag_works_before_the_subcommand() {
+fn filters_narrow_the_default_filter() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let db_path = db.to_str().unwrap();
@@ -981,15 +995,52 @@ fn backlog_flag_works_before_the_subcommand() {
         .assert()
         .success();
     ranger(db_path)
-        .args(["--backlog", "Other", "task", "create", "Here"])
+        .args([
+            "--default-filter",
+            "project:Other",
+            "task",
+            "create",
+            "Here",
+        ])
         .assert()
         .success();
-    let output = ranger(db_path)
-        .args(["task", "list", "--backlog", "Other", "--json"])
-        .output()
-        .unwrap();
-    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(tasks[0]["title"], "Here");
+    ranger(db_path)
+        .args([
+            "--default-filter",
+            "project:Other",
+            "task",
+            "create",
+            "Bug",
+            "--filter",
+            "bug",
+        ])
+        .assert()
+        .success();
+    let titles = |args: &[&str]| -> Vec<String> {
+        let output = ranger(db_path).args(args).output().unwrap();
+        let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        tasks
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["title"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let other = [
+        "--default-filter",
+        "project:Other",
+        "task",
+        "list",
+        "--json",
+    ];
+    assert_eq!(titles(&other), ["Here", "Bug"]);
+    // --filter narrows the default rather than replacing it.
+    assert_eq!(
+        titles(&[&other[..], &["--filter", "bug"]].concat()),
+        ["Bug"]
+    );
+    // The default here is project:Ranger, which has no tasks.
+    assert!(titles(&["task", "list", "--json", "--filter", "bug"]).is_empty());
 }
 
 #[test]
@@ -1006,4 +1057,33 @@ fn internal_skill_prints_the_guide_without_touching_the_db() {
         include_str!("../src/bin/ranger/skill.md")
     );
     assert!(!db.exists());
+}
+
+#[test]
+fn legacy_default_backlog_still_works_with_a_warning() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+    ranger(db_path)
+        .args(["backlog", "create", "Old"])
+        .assert()
+        .success();
+    let legacy = |args: &[&str]| {
+        ranger(db_path)
+            .env_remove("RANGER_DEFAULT_FILTER")
+            .env("RANGER_DEFAULT_BACKLOG", "Old")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let output = legacy(&["task", "create", "Still here", "--json"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr).unwrap().contains(
+        "warning: RANGER_DEFAULT_BACKLOG is deprecated; set RANGER_DEFAULT_FILTER=project:Old instead"
+    ));
+
+    let output = legacy(&["task", "list", "--json"]);
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(tasks[0]["title"], "Still here");
 }

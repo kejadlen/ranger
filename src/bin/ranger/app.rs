@@ -6,80 +6,88 @@ use ranger::filter::Filter;
 /// here instead of taking them as separate arguments or reading env vars.
 pub struct Ranger {
     pub pool: SqlitePool,
-    /// The backlog from `--backlog`/`RANGER_DEFAULT_BACKLOG`. Task keys
-    /// resolve within it first.
-    pub backlog: Option<String>,
+    /// The default filter narrowed by `--filter`. Commands work within it,
+    /// and task keys resolve among the tasks it matches first.
+    pub filter: Filter,
     /// Print JSON instead of human-readable output.
     pub json: bool,
     /// `$EDITOR`, for `task edit` with no field flags.
     pub editor: Option<String>,
 }
 
-impl Ranger {
-    /// The tasks a key resolves against first: those in the backlog,
-    /// narrowed by `filter`. Keys outside it still resolve when nothing inside
-    /// matches; see `ops::task::get_by_key_prefix`.
-    pub fn key_scope(&self, filter: &Filter) -> Filter {
-        key_scope(self.backlog.as_deref(), filter)
+/// The default filter, falling back to the deprecated `RANGER_DEFAULT_BACKLOG`
+/// as that backlog's `project:` term. Also returns a warning to print
+/// whenever the old variable is set.
+pub fn default_filter(
+    filter: Option<Filter>,
+    legacy_backlog: Option<&str>,
+) -> (Filter, Option<String>) {
+    let Some(name) = legacy_backlog else {
+        return (filter.unwrap_or_default(), None);
+    };
+    if let Some(filter) = filter {
+        let warning = "RANGER_DEFAULT_BACKLOG is deprecated and ignored, since \
+                       RANGER_DEFAULT_FILTER is set; unset it";
+        return (filter, Some(warning.to_string()));
     }
-}
-
-fn key_scope(backlog: Option<&str>, filter: &Filter) -> Filter {
-    let backlog_term = backlog.and_then(|name| ranger::ops::backlog::project_term(name).ok());
-    Filter(
-        backlog_term
-            .into_iter()
-            .chain(filter.0.iter().cloned())
-            .collect(),
-    )
+    match ranger::ops::backlog::project_term(name) {
+        Ok(term) => {
+            let filter = Filter(vec![term]);
+            let warning = format!(
+                "RANGER_DEFAULT_BACKLOG is deprecated; set RANGER_DEFAULT_FILTER={filter} instead"
+            );
+            (filter, Some(warning))
+        }
+        Err(_) => {
+            let warning = format!(
+                "RANGER_DEFAULT_BACKLOG is deprecated, and {name:?} isn't a valid backlog \
+                 name, so it's ignored; set RANGER_DEFAULT_FILTER instead"
+            );
+            (Filter::default(), Some(warning))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hegel::TestCase;
-    use hegel::generators as gs;
-    use ranger::filter::{Matcher, Term};
-    use ranger::models::TagParts;
 
-    fn text() -> gs::TextGenerator {
-        gs::text().alphabet("ab-:é_ ").max_size(6)
+    fn filter(s: &str) -> Filter {
+        s.parse().unwrap()
     }
 
-    /// The scope is the filter's own terms, led by the backlog's
-    /// `project:` tag when there is one that can be written as a tag.
-    #[hegel::test]
-    fn prop_key_scope_prepends_backlog_term(tc: TestCase) {
-        let count = tc.draw(gs::integers::<usize>().max_value(4));
-        let terms = (0..count)
-            .map(|_| Term {
-                negated: tc.draw(gs::booleans()),
-                matcher: Matcher::Tag {
-                    key: tc.draw(text()),
-                    value: tc.draw(text()),
-                },
-            })
-            .collect();
-        let filter = Filter(terms);
-        let backlog = tc.draw(gs::optional(text()));
+    #[test]
+    fn default_filter_without_the_legacy_variable() {
+        assert_eq!(default_filter(None, None), (Filter::default(), None));
+        let f = filter("project:ranger -bug");
+        assert_eq!(default_filter(Some(f.clone()), None), (f, None));
+    }
 
-        let scope = key_scope(backlog.as_deref(), &filter);
+    #[test]
+    fn legacy_backlog_becomes_a_project_term() {
+        let (f, warning) = default_filter(None, Some("ranger"));
+        assert_eq!(f, filter("project:ranger"));
+        assert_eq!(
+            warning.unwrap(),
+            "RANGER_DEFAULT_BACKLOG is deprecated; set RANGER_DEFAULT_FILTER=project:ranger instead"
+        );
+    }
 
-        let tag = backlog.as_deref().map(ranger::ops::backlog::project_tag);
-        match tag.as_deref().map(TagParts::try_from) {
-            Some(Ok(parts)) => {
-                assert_eq!(scope.0[1..], filter.0[..]);
-                let first = &scope.0[0];
-                assert!(!first.negated);
-                assert_eq!(
-                    first.matcher,
-                    Matcher::Tag {
-                        key: parts.key.to_string(),
-                        value: parts.value.to_string(),
-                    }
-                );
-            }
-            _ => assert_eq!(scope, filter),
-        }
+    #[test]
+    fn default_filter_wins_over_legacy_backlog() {
+        let (f, warning) = default_filter(Some(filter("bug")), Some("ranger"));
+        assert_eq!(f, filter("bug"));
+        assert!(warning.unwrap().contains("ignored"));
+    }
+
+    #[test]
+    fn invalid_legacy_backlog_is_ignored() {
+        let (f, warning) = default_filter(None, Some("two words"));
+        assert_eq!(f, Filter::default());
+        assert!(
+            warning
+                .unwrap()
+                .contains("\"two words\" isn't a valid backlog name")
+        );
     }
 }

@@ -29,7 +29,12 @@ struct AppState {
 pub async fn run(ranger: &Ranger, port: u16) -> Result<(), ranger::error::RangerError> {
     let state = AppState {
         pool: ranger.pool.clone(),
-        default_backlog: ranger.backlog.clone(),
+        // The board shows one backlog: the default filter's project, if any.
+        default_backlog: ranger
+            .filter
+            .tags()
+            .find(|t| t.key == "project")
+            .map(|t| t.value.to_string()),
     };
 
     let app = Router::new()
