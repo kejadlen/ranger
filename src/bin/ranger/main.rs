@@ -37,6 +37,11 @@ struct Cli {
     )]
     default_filter: Option<ranger::filter::Filter>,
 
+    /// Deprecated: the backlog whose `project:` tag is the default filter
+    /// when RANGER_DEFAULT_FILTER isn't set.
+    #[arg(long, env = "RANGER_DEFAULT_BACKLOG", global = true, hide = true)]
+    default_backlog: Option<String>,
+
     /// Space-separated filter terms: `bug` or `key:value` for a tag,
     /// `state:<state>` for a state, and a leading `-` to negate. Together
     /// with the default filter, `task list` shows only tasks matching every
@@ -128,10 +133,12 @@ fn main() -> miette::Result<()> {
 
     output::init_color(cli.color);
     let db_path = resolve_db_path(cli.db);
-    let filter = cli
-        .default_filter
-        .unwrap_or_default()
-        .and(cli.filter.unwrap_or_default());
+    let (default_filter, warning) =
+        app::default_filter(cli.default_filter, cli.default_backlog.as_deref());
+    if let Some(warning) = warning {
+        eprintln!("warning: {warning}");
+    }
+    let filter = default_filter.and(cli.filter.unwrap_or_default());
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

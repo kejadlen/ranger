@@ -1058,3 +1058,32 @@ fn internal_skill_prints_the_guide_without_touching_the_db() {
     );
     assert!(!db.exists());
 }
+
+#[test]
+fn legacy_default_backlog_still_works_with_a_warning() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+    ranger(db_path)
+        .args(["backlog", "create", "Old"])
+        .assert()
+        .success();
+    let legacy = |args: &[&str]| {
+        ranger(db_path)
+            .env_remove("RANGER_DEFAULT_FILTER")
+            .env("RANGER_DEFAULT_BACKLOG", "Old")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let output = legacy(&["task", "create", "Still here", "--json"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stderr).unwrap().contains(
+        "warning: RANGER_DEFAULT_BACKLOG is deprecated; set RANGER_DEFAULT_FILTER=project:Old instead"
+    ));
+
+    let output = legacy(&["task", "list", "--json"]);
+    let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(tasks[0]["title"], "Still here");
+}
