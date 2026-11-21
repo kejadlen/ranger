@@ -125,7 +125,7 @@ mod tests {
             .map(|row| sqlx::Row::get(row, "name"))
             .collect();
 
-        assert!(table_names.contains(&"backlogs".to_string()));
+        assert!(!table_names.contains(&"backlogs".to_string()));
         assert!(table_names.contains(&"tasks".to_string()));
         assert!(table_names.contains(&"comments".to_string()));
         assert!(table_names.contains(&"tags".to_string()));
@@ -339,6 +339,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body.0, "still here");
+    }
+
+    #[tokio::test]
+    async fn dropping_backlogs_keeps_project_tags() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = migrate_before(&db_path, 18).await;
+        sqlx::raw_sql(
+            "INSERT INTO backlogs (name) VALUES ('ranger');
+             INSERT INTO tags (key, value) VALUES ('project', 'ranger');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = connect(&db_path).await.unwrap();
+        let backlogs: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM sqlite_master WHERE name = 'backlogs'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(backlogs.0, 0);
+        let tags: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE key = 'project'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tags.0, 1);
     }
 
     #[tokio::test]

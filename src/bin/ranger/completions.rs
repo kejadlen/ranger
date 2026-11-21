@@ -58,34 +58,3 @@ pub fn complete_task_keys(current: &OsStr) -> Vec<CompletionCandidate> {
     })
     .unwrap_or_default()
 }
-
-/// Complete backlog names.
-pub fn complete_backlog_names(current: &OsStr) -> Vec<CompletionCandidate> {
-    let Some(current) = current.to_str() else {
-        return vec![];
-    };
-    let Some(db_path) = resolve_db_path() else {
-        return vec![];
-    };
-    if !db_path.exists() {
-        return vec![];
-    }
-
-    block_on(async {
-        let pool = ranger::db::connect(&db_path).await.ok()?;
-        let mut conn = pool.acquire().await.ok()?;
-
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM backlogs ORDER BY name")
-            .fetch_all(&mut *conn)
-            .await
-            .ok()?;
-
-        Some(
-            rows.into_iter()
-                .filter(|(name,)| name.starts_with(current))
-                .map(|(name,)| CompletionCandidate::new(name))
-                .collect(),
-        )
-    })
-    .unwrap_or_default()
-}

@@ -126,12 +126,3 @@ pub fn format_key_from_map(key: &str, prefix_lengths: &HashMap<String, usize>) -
     let len = prefix_lengths.get(key).copied().unwrap_or(DISPLAY_LEN);
     format_key(key, len)
 }
-
-/// Format a tag name for display (`#name`), cyan when color is enabled.
-pub fn format_tag(name: &str) -> String {
-    if use_color() {
-        format!("\x1b[36m#{name}\x1b[0m")
-    } else {
-        format!("#{name}")
-    }
-}

@@ -31,7 +31,7 @@ src/
 ├── db.rs                # SQLite connection, migrations
 ├── error.rs             # Error types
 ├── key.rs               # jj-style key generation
-├── models.rs            # Data types (Backlog, Task, Comment, Tag, Blocker)
+├── models.rs            # Data types (Task, Comment, Tag, Blocker)
 ├── position.rs          # Lexicographic fractional indexing
 ├── ops/                 # CRUD operations per model
 └── bin/ranger/          # CLI binary
@@ -71,7 +71,7 @@ When installing system packages (`apt-get`), adding Rust components (`rustup com
 - `sqlx::raw_sql` is used for migrations (multiple statements in one file). `sqlx::query` only runs one statement.
 - SQLite foreign keys must be enabled per-connection (`foreign_keys(true)` on connect options).
 - The `xdg` crate resolves `$XDG_DATA_HOME/ranger/ranger.db`. Override with `RANGER_DB` env var or `--db` flag.
-- Backlogs are identified by name, not key. `RANGER_DEFAULT_FILTER` (`--default-filter`) sets the filter every command works within; `--filter` narrows it.
+- There are no backlog records. `RANGER_DEFAULT_FILTER` (`--default-filter`) sets the filter every command works within; `--filter` narrows it.
 - Migration uses `CREATE TABLE IF NOT EXISTS` so it's idempotent (safe to run on every connect).
 - **Never modify existing migrations.** They have already been run against real databases. Schema changes go in new migration files only.
 - **Migrations must not lose data.** When recreating a table, always `INSERT INTO ... SELECT` all rows from the original, including data in join tables (e.g. `task_tags`). Test migrations against a database with real data, not just empty schemas.
