@@ -68,6 +68,8 @@ impl PositionAnchors {
 
 #[derive(Subcommand)]
 pub enum TaskCommands {
+    /// Respace every task's position, keeping their order
+    Rebalance,
     /// Create a new task
     #[command(visible_alias = "new")]
     Create {
@@ -306,6 +308,16 @@ pub async fn run(ranger: &Ranger, command: TaskCommands) -> Result<(), Error> {
                 None => {
                     return Err(Error::Usage("--before or --after is required".into()));
                 }
+            }
+        }
+        TaskCommands::Rebalance => {
+            let mut conn = pool.acquire().await?;
+            let count = ops::task::rebalance(&mut conn).await?;
+            if json {
+                let value = serde_json::json!({ "rebalanced": count });
+                println!("{}", serde_json::to_string_pretty(&value).unwrap());
+            } else {
+                println!("Rebalanced {count} tasks");
             }
         }
         TaskCommands::Delete { key, yes } => {

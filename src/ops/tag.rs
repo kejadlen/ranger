@@ -161,14 +161,12 @@ mod tests {
         (pool, task.id, dir)
     }
 
-    async fn setup_two_backlogs() -> (sqlx::SqlitePool, i64, i64, i64, i64, tempfile::TempDir) {
+    async fn setup_two_projects() -> (sqlx::SqlitePool, i64, i64, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let pool = crate::db::connect(&dir.path().join("test.db"))
             .await
             .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        let bl1 = ops::backlog::create(&mut conn, "Alpha").await.unwrap();
-        let bl2 = ops::backlog::create(&mut conn, "Beta").await.unwrap();
         let t1 = ops::task::create(
             &mut conn,
             CreateTask {
@@ -191,7 +189,7 @@ mod tests {
         .unwrap();
         add(&mut conn, t1.id, "project:Alpha").await.unwrap();
         add(&mut conn, t2.id, "project:Beta").await.unwrap();
-        (pool, bl1.id, bl2.id, t1.id, t2.id, dir)
+        (pool, t1.id, t2.id, dir)
     }
 
     /// The name the database derives for a tag is the canonical name
@@ -369,7 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_used_by_scopes_to_matching_tasks() {
-        let (pool, _bl1_id, _bl2_id, t1_id, t2_id, _dir) = setup_two_backlogs().await;
+        let (pool, t1_id, t2_id, _dir) = setup_two_projects().await;
         let mut conn = pool.acquire().await.unwrap();
 
         add(&mut conn, t1_id, "frontend").await.unwrap();
@@ -403,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_used_by_empty_scope_match() {
-        let (pool, _bl1_id, _bl2_id, _t1_id, _t2_id, _dir) = setup_two_backlogs().await;
+        let (pool, _t1_id, _t2_id, _dir) = setup_two_projects().await;
         let mut conn = pool.acquire().await.unwrap();
 
         let tags = user_tags(

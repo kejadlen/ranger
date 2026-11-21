@@ -1,11 +1,10 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::{IntoResponse, Redirect};
 use axum::{Json, Router, routing::get, routing::post};
 use maud::{DOCTYPE, Markup, html};
 use ranger::filter::Filter;
-use ranger::key;
 use ranger::models::Task;
 use ranger::ops;
 use ranger::ops::task::ListFilter;
@@ -23,23 +22,19 @@ const BOARD_JS: &str = include_str!("../../../../static/board.js");
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
-    default_backlog: Option<String>,
+    /// The board's filter when the URL doesn't give one.
+    default_filter: Filter,
 }
 
 pub async fn run(ranger: &Ranger, port: u16) -> Result<(), ranger::error::RangerError> {
     let state = AppState {
         pool: ranger.pool.clone(),
-        // The board shows one backlog: the default filter's project, if any.
-        default_backlog: ranger
-            .filter
-            .tags()
-            .find(|t| t.key == "project")
-            .map(|t| t.value.to_string()),
+        default_filter: ranger.filter.clone(),
     };
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/b/{name}", get(board))
+        .route("/b/{name}", get(old_backlog_board))
         .route("/static/style.css", get(serve_css))
         .route("/static/board.js", get(serve_js))
         .route("/api/tasks/{key}/move", post(api_move_task))
@@ -62,27 +57,42 @@ async fn serve_js() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/javascript")], BOARD_JS)
 }
 
-async fn index(State(state): State<AppState>) -> Result<Redirect, Markup> {
-    // If a default backlog is set, redirect to it
-    if let Some(ref name) = state.default_backlog {
-        return Ok(Redirect::to(&format!("/b/{name}")));
-    }
-
-    // Otherwise, redirect to the first backlog
-    let mut conn = state.pool.acquire().await.map_err(error_page)?;
-    let backlogs = ops::backlog::list(&mut conn).await.map_err(error_page)?;
-
-    match backlogs.first() {
-        Some(b) => Ok(Redirect::to(&format!("/b/{}", b.name))),
-        None => Err(error_page("No backlogs found")),
-    }
+#[derive(Deserialize)]
+struct BoardQuery {
+    filter: Option<String>,
 }
 
-async fn board(State(state): State<AppState>, Path(name): Path<String>) -> Markup {
-    match render_board(&state, &name).await {
+/// The board for the `filter` query parameter, or the default filter.
+async fn index(State(state): State<AppState>, Query(query): Query<BoardQuery>) -> Markup {
+    let filter = match query.filter.as_deref().map(str::parse::<Filter>) {
+        Some(Ok(filter)) => filter,
+        Some(Err(e)) => return error_page(e),
+        None => state.default_filter.clone(),
+    };
+    match render_board(&state, &filter).await {
         Ok(markup) => markup,
         Err(e) => error_page(e),
     }
+}
+
+/// Backlog boards used to live at `/b/{name}`. Send old links to the board
+/// for that backlog's `project:` tag.
+async fn old_backlog_board(Path(name): Path<String>) -> Redirect {
+    Redirect::permanent(&board_href(&format!("project:{name}")))
+}
+
+/// The board URL for a filter.
+fn board_href(filter: &str) -> String {
+    let mut href = String::from("/?filter=");
+    for b in filter.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b':' => {
+                href.push(b as char)
+            }
+            _ => href.push_str(&format!("%{b:02X}")),
+        }
+    }
+    href
 }
 
 #[derive(Deserialize)]
@@ -231,17 +241,24 @@ struct TaskView {
 
 async fn render_board(
     state: &AppState,
-    backlog_name: &str,
+    filter: &Filter,
 ) -> Result<Markup, ranger::error::RangerError> {
     let mut conn = state.pool.acquire().await?;
 
-    // Fetch all backlogs for the selector
-    let backlogs = ops::backlog::list(&mut conn).await?;
-    let backlog_names: Vec<String> = backlogs.iter().map(|b| b.name.clone()).collect();
+    // Every project gets a link in the picker.
+    let projects: Vec<String> = ops::tag::list_all(&mut conn)
+        .await?
+        .into_iter()
+        .filter(|t| t.key == "project")
+        .map(|t| t.value)
+        .collect();
+    let label = if filter.0.is_empty() {
+        "all tasks".to_string()
+    } else {
+        filter.to_string()
+    };
 
-    let backlog = ops::backlog::get_by_name(&mut conn, backlog_name).await?;
-    let all_keys = ops::task::all_keys(&mut conn).await?;
-    let prefixes = key::unique_prefix_lengths(&all_keys);
+    let prefixes = ops::task::prefix_lengths(&mut conn, filter).await?;
 
     let mut in_progress = Vec::new();
     let mut ready = Vec::new();
@@ -256,7 +273,7 @@ async fn render_board(
     ] {
         let filter = ListFilter {
             state: Some(s.clone()),
-            terms: Filter(vec![ops::backlog::project_term(&backlog.name)?]),
+            terms: filter.clone(),
             ..Default::default()
         };
         let tasks = ops::task::list(&mut conn, &filter).await?;
@@ -280,34 +297,41 @@ async fn render_board(
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 meta name="theme-color" content="#1a1b1e";
                 link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌲</text></svg>";
-                title { "ranger › " (backlog_name) }
+                title { "ranger › " (label) }
                 link rel="stylesheet" href="/static/style.css";
             }
             body {
                 header {
                     h1 {
                         "ranger" span.sep { "›" }
-                        @if backlog_names.len() > 1 {
+                        @if projects.is_empty() {
+                            (label)
+                        } @else {
                             span.backlog-picker {
                                 button.backlog-trigger popovertarget="backlog-menu" {
-                                    (backlog_name)
+                                    (label)
                                     span.backlog-caret { "▾" }
                                 }
                                 div #backlog-menu.backlog-popover popover="" {
                                     ul.backlog-list {
-                                        @for name in &backlog_names {
+                                        @for name in &projects {
+                                            @let term = format!("project:{name}");
                                             li {
-                                                a.backlog-option class=@if name == backlog_name { "active" }
-                                                  href=(format!("/b/{name}")) {
+                                                a.backlog-option class=@if term == label { "active" }
+                                                  href=(board_href(&term)) {
                                                     (name)
                                                 }
+                                            }
+                                        }
+                                        li {
+                                            a.backlog-option class=@if filter.0.is_empty() { "active" }
+                                              href="/?filter=" {
+                                                "all tasks"
                                             }
                                         }
                                     }
                                 }
                             }
-                        } @else {
-                            (backlog_name)
                         }
                     }
                     div.counts { (active) " active · " (total) " total" }

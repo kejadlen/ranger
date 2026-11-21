@@ -9,8 +9,6 @@ pub enum RangerError {
         task_state: String,
         anchor_state: String,
     },
-    #[error("backlog not found: '{0}'")]
-    BacklogNotFound(String),
     #[error(transparent)]
     InvalidState(#[from] crate::models::InvalidStateError),
     #[error("database error: {0}")]

@@ -1,4 +1,6 @@
 use ranger::db::SqlitePool;
+use std::str::FromStr;
+
 use ranger::filter::Filter;
 
 /// What every command runs against: the database and the settings `main`
@@ -30,7 +32,7 @@ pub fn default_filter(
                        RANGER_DEFAULT_FILTER is set; unset it";
         return (filter, Some(warning.to_string()));
     }
-    match ranger::ops::backlog::project_term(name) {
+    match ranger::filter::Term::from_str(&format!("project:{name}")) {
         Ok(term) => {
             let filter = Filter(vec![term]);
             let warning = format!(

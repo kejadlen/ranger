@@ -53,11 +53,6 @@ fn edit_without_flags_opens_editor() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let db_path = db.to_str().unwrap();
-
-    ranger(db_path)
-        .args(["backlog", "create", "Ranger"])
-        .assert()
-        .success();
     ranger(db_path)
         .args([
             "task",
@@ -157,24 +152,6 @@ fn full_workflow() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let db_path = db.to_str().unwrap();
-
-    // Create a backlog
-    let output = ranger(db_path)
-        .args(["backlog", "create", "Ranger"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Ranger"));
-
-    // List backlogs (JSON)
-    let output = ranger(db_path)
-        .args(["backlog", "list", "--json"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let backlogs: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(backlogs[0]["name"], "Ranger");
 
     // Create tasks (using RANGER_DEFAULT_FILTER)
     let output = ranger(db_path)
@@ -329,7 +306,7 @@ fn full_workflow() {
 
     // Rebalance
     ranger(db_path)
-        .args(["backlog", "rebalance"])
+        .args(["task", "rebalance"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Rebalanced"));
@@ -437,62 +414,6 @@ fn full_workflow() {
     assert!(
         detail["task"]["done_at"].is_string(),
         "JSON should include done_at for done tasks"
-    );
-
-    // Backlog show hides done tasks by default
-    let output = ranger(db_path)
-        .args(["backlog", "show", "Ranger"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        !stdout.contains("[done]"),
-        "should not show done section by default"
-    );
-
-    // Backlog show --done shows only done tasks
-    let output = ranger(db_path)
-        .args(["backlog", "show", "Ranger", "--done"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        stdout.contains("[done]"),
-        "should show done section with --done"
-    );
-    assert!(
-        !stdout.contains("[in_progress]"),
-        "--done should not show in_progress"
-    );
-    assert!(!stdout.contains("[ready]"), "--done should not show ready");
-    assert!(
-        !stdout.contains("[icebox]"),
-        "--done should not show icebox"
-    );
-
-    // Backlog show --done with JSON shows only done tasks
-    let output = ranger(db_path)
-        .args(["backlog", "show", "Ranger", "--done", "--json"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(detail["tasks"]["done"].is_array());
-    assert!(detail["tasks"]["ready"].is_null());
-    assert!(detail["tasks"]["in_progress"].is_null());
-
-    // Backlog show JSON without --done excludes done tasks
-    let output = ranger(db_path)
-        .args(["backlog", "show", "Ranger", "--json"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let detail: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        detail["tasks"]["done"].is_null(),
-        "JSON should exclude done without --done"
     );
 
     // --- Tags ---
@@ -667,52 +588,6 @@ fn full_workflow() {
     assert!(!stdout.contains("bug"));
     assert!(stdout.contains("frontend"));
 
-    // --- Backlog delete ---
-
-    // Create a throwaway backlog with a task, then delete it
-    ranger(db_path)
-        .args(["backlog", "create", "Throwaway"])
-        .output()
-        .unwrap();
-    ranger(db_path)
-        .args([
-            "task",
-            "create",
-            "Doomed task",
-            "--default-filter",
-            "project:Throwaway",
-        ])
-        .output()
-        .unwrap();
-    let output = ranger(db_path)
-        .args(["backlog", "delete", "Throwaway", "--yes"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Deleted backlog: Throwaway"));
-
-    // Verify backlog is gone
-    let output = ranger(db_path)
-        .args(["backlog", "list", "--json"])
-        .output()
-        .unwrap();
-    let backlogs: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let names: Vec<&str> = backlogs
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|b| b["name"].as_str().unwrap())
-        .collect();
-    assert!(!names.contains(&"Throwaway"));
-
-    // Deleting non-existent backlog fails
-    let output = ranger(db_path)
-        .args(["backlog", "delete", "Nonexistent", "--yes"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-
     // Dynamic shell completions via COMPLETE env var
     for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
         let output = ranger(db_path).env("COMPLETE", shell).output().unwrap();
@@ -738,19 +613,6 @@ fn full_workflow() {
         "task key completions should include task titles as help text, got: {stdout}"
     );
 
-    // Dynamic completion of backlog names
-    let output = ranger(db_path)
-        .env("COMPLETE", "fish")
-        .args(["--", "ranger", "backlog", "show", ""])
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "backlog name completion failed");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        stdout.contains("Ranger"),
-        "backlog name completions should include backlog names"
-    );
-
     // --version prints version string
     ranger(db_path)
         .args(["--version"])
@@ -767,10 +629,6 @@ fn empty_list_prints_note_on_stderr() {
     let db_path = db.to_str().unwrap();
 
     // A backlog with no tasks exercises the task-list empty cases.
-    ranger(db_path)
-        .args(["backlog", "create", "Empty"])
-        .assert()
-        .success();
 
     // Plain empty: note on stderr, stdout stays clean for pipes.
     let output = ranger(db_path)
@@ -887,11 +745,6 @@ fn empty_lists_other_commands() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let db_path = db.to_str().unwrap();
-
-    ranger(db_path)
-        .args(["backlog", "create", "Ranger"])
-        .assert()
-        .success();
     let t1 = ranger(db_path)
         .args(["task", "create", "Lonely task", "--json"])
         .output()
@@ -935,13 +788,6 @@ fn keys_resolve_outside_the_default_backlog() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let db_path = db.to_str().unwrap();
-
-    for name in ["Ranger", "Other"] {
-        ranger(db_path)
-            .args(["backlog", "create", name])
-            .assert()
-            .success();
-    }
     let output = ranger(db_path)
         .args([
             "task",
@@ -990,10 +836,6 @@ fn filters_narrow_the_default_filter() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let db_path = db.to_str().unwrap();
-    ranger(db_path)
-        .args(["backlog", "create", "Other"])
-        .assert()
-        .success();
     ranger(db_path)
         .args([
             "--default-filter",
@@ -1064,10 +906,6 @@ fn legacy_default_backlog_still_works_with_a_warning() {
     let dir = tempdir().unwrap();
     let db = dir.path().join("test.db");
     let db_path = db.to_str().unwrap();
-    ranger(db_path)
-        .args(["backlog", "create", "Old"])
-        .assert()
-        .success();
     let legacy = |args: &[&str]| {
         ranger(db_path)
             .env_remove("RANGER_DEFAULT_FILTER")
