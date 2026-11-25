@@ -1135,3 +1135,38 @@ fn task_list_groups_tasks_under_state_headers() {
         ]
     );
 }
+
+#[test]
+fn task_list_shows_tags_the_filter_does_not_require() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+    ranger(db_path)
+        .args(["backlog", "create", "Ranger"])
+        .assert()
+        .success();
+    let output = ranger(db_path)
+        .args(["--json", "task", "create", "Tagged"])
+        .output()
+        .unwrap();
+    let task: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let key = task["key"].as_str().unwrap();
+    for tag in ["web", "bug"] {
+        ranger(db_path)
+            .args(["tag", "add", key, tag])
+            .assert()
+            .success();
+    }
+
+    let stdout = |args: &[&str]| {
+        let output = ranger(db_path).args(args).output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let shown = stdout(&["task", "list"]);
+    assert!(shown.contains("Tagged #bug #web"), "{shown}");
+    assert!(!shown.contains("project:Ranger"), "{shown}");
+
+    let shown = stdout(&["task", "list", "--tag", "web"]);
+    assert!(shown.contains("Tagged #bug\n"), "{shown}");
+}

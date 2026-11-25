@@ -217,7 +217,8 @@ pub async fn run(ranger: &Ranger, command: TaskCommands) -> Result<(), Error> {
             let note = empty_task_note(&filter);
             let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             let tasks = ops::task::list(&mut conn, &filter).await?;
-            output::print_list_with(&tasks, json, &note, |ts| print_board(ts, &prefixes));
+            let tags = listed_tags(&mut conn, &tasks, &filter).await?;
+            output::print_list_with(&tasks, json, &note, |ts| print_board(ts, &prefixes, &tags));
         }
         TaskCommands::Show { key } => {
             let mut conn = pool.acquire().await?;
@@ -399,20 +400,55 @@ fn print_task(t: &Task, prefixes: &HashMap<String, usize>) {
     );
 }
 
+/// Each listed task's tag names, by task id, without the tags `filter`
+/// requires: every listed task carries those, so they're noise.
+async fn listed_tags(
+    conn: &mut SqliteConnection,
+    tasks: &[Task],
+    filter: &ListFilter,
+) -> Result<HashMap<i64, Vec<String>>, Error> {
+    let terms = Filter(filter.all_terms()?);
+    let required: Vec<_> = terms.tags().collect();
+    let mut by_task = HashMap::with_capacity(tasks.len());
+    for t in tasks {
+        let names = ops::tag::list_for_task(conn, t.id)
+            .await?
+            .into_iter()
+            .filter(|tag| {
+                !required
+                    .iter()
+                    .any(|r| r.key == tag.key && r.value == tag.value)
+            })
+            .map(|tag| tag.name)
+            .collect();
+        by_task.insert(t.id, names);
+    }
+    Ok(by_task)
+}
+
 /// Print `tasks`, which `ops::task::list` returns sorted by state, under a
-/// header per state.
-fn print_board(tasks: &[Task], prefixes: &HashMap<String, usize>) {
+/// header per state, each followed by its tags.
+fn print_board(
+    tasks: &[Task],
+    prefixes: &HashMap<String, usize>,
+    tags: &HashMap<i64, Vec<String>>,
+) {
     for (i, group) in tasks.chunk_by(|a, b| a.state == b.state).enumerate() {
         if i > 0 {
             println!();
         }
         println!("[{}]", group[0].state);
         for t in group {
-            println!(
+            let mut line = format!(
                 "  {} {}",
                 output::format_key_from_map(&t.key, prefixes),
                 t.title
             );
+            for name in tags.get(&t.id).into_iter().flatten() {
+                line.push(' ');
+                line.push_str(&output::format_tag(name));
+            }
+            println!("{line}");
         }
     }
 }
