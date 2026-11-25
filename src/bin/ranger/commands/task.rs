@@ -217,7 +217,7 @@ pub async fn run(ranger: &Ranger, command: TaskCommands) -> Result<(), Error> {
             let note = empty_task_note(&filter);
             let prefixes = ops::task::prefix_lengths(&mut conn, scope).await?;
             let tasks = ops::task::list(&mut conn, &filter).await?;
-            output::print_list(&tasks, json, &note, |t| print_task(t, &prefixes));
+            output::print_list_with(&tasks, json, &note, |ts| print_board(ts, &prefixes));
         }
         TaskCommands::Show { key } => {
             let mut conn = pool.acquire().await?;
@@ -397,6 +397,24 @@ fn print_task(t: &Task, prefixes: &HashMap<String, usize>) {
         t.state,
         t.title
     );
+}
+
+/// Print `tasks`, which `ops::task::list` returns sorted by state, under a
+/// header per state.
+fn print_board(tasks: &[Task], prefixes: &HashMap<String, usize>) {
+    for (i, group) in tasks.chunk_by(|a, b| a.state == b.state).enumerate() {
+        if i > 0 {
+            println!();
+        }
+        println!("[{}]", group[0].state);
+        for t in group {
+            println!(
+                "  {} {}",
+                output::format_key_from_map(&t.key, prefixes),
+                t.title
+            );
+        }
+    }
 }
 
 fn print_task_detail(t: &Task, prefixes: &HashMap<String, usize>) {

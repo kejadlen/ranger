@@ -1089,3 +1089,49 @@ fn legacy_default_backlog_still_works_with_a_warning() {
     let tasks: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(tasks[0]["title"], "Still here");
 }
+
+#[test]
+fn task_list_groups_tasks_under_state_headers() {
+    let dir = tempdir().unwrap();
+    let db = dir.path().join("test.db");
+    let db_path = db.to_str().unwrap();
+    ranger(db_path)
+        .args(["backlog", "create", "Ranger"])
+        .assert()
+        .success();
+    for (title, state) in [
+        ("Idea", "icebox"),
+        ("Next", "ready"),
+        ("Now", "in_progress"),
+    ] {
+        ranger(db_path)
+            .args(["task", "create", title, "--state", state])
+            .assert()
+            .success();
+    }
+
+    let output = ranger(db_path).args(["task", "list"]).output().unwrap();
+    assert!(output.status.success());
+    // Keys are random, so drop them and keep the headers and titles.
+    let lines: Vec<String> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| match line.strip_prefix("  ") {
+            Some(task) => format!("  {}", task.split_once(' ').unwrap().1),
+            None => line.to_string(),
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "[in_progress]",
+            "  Now",
+            "",
+            "[ready]",
+            "  Next",
+            "",
+            "[icebox]",
+            "  Idea",
+        ]
+    );
+}

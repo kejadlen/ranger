@@ -59,15 +59,23 @@ pub fn print_list<T: Serialize + std::fmt::Debug>(
     empty_note: &str,
     human: impl Fn(&T),
 ) {
+    print_list_with(values, json, empty_note, |vs| vs.iter().for_each(human));
+}
+
+/// Like `print_list`, but `human` prints the whole non-empty list at once.
+pub fn print_list_with<T: Serialize + std::fmt::Debug>(
+    values: &[T],
+    json: bool,
+    empty_note: &str,
+    human: impl FnOnce(&[T]),
+) {
     if json {
         println!("{}", serde_json::to_string_pretty(values).unwrap());
     } else if values.is_empty() {
         // Stderr so a pipe still sees an empty stdout; `--json` keeps printing `[]`.
         eprintln!("{empty_note}");
     } else {
-        for v in values {
-            human(v);
-        }
+        human(values);
     }
 }
 
