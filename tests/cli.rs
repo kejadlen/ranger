@@ -6,6 +6,8 @@ fn ranger(db_path: &str) -> Command {
     let mut cmd = Command::from(cargo_bin_cmd!("ranger"));
     cmd.env("RANGER_DB", db_path);
     cmd.env("RANGER_DEFAULT_FILTER", "project:Ranger");
+    // Keep the developer's shell settings out of the tests.
+    cmd.env_remove("RANGER_DEFAULT_BACKLOG");
     cmd
 }
 
