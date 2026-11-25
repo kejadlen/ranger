@@ -145,7 +145,9 @@ pub async fn list(
     query.push_str(if is_done_only {
         " ORDER BY done_at"
     } else {
-        " ORDER BY position"
+        " ORDER BY CASE state \
+             WHEN 'in_progress' THEN 0 WHEN 'ready' THEN 1 WHEN 'icebox' THEN 2 ELSE 3 \
+         END, position"
     });
 
     let mut q = sqlx::query_as::<_, Task>(&query);
@@ -604,6 +606,34 @@ mod tests {
         assert_eq!(tasks[0].id, t1.id);
         assert_eq!(tasks[1].id, t2.id);
         assert_eq!(tasks[2].id, t3.id);
+    }
+
+    #[tokio::test]
+    async fn list_groups_by_state_before_position() {
+        let pool = test_pool().await;
+        let mut conn = pool.acquire().await.unwrap();
+        for (title, state) in [
+            ("done", State::Done),
+            ("icebox", State::Icebox),
+            ("ready1", State::Ready),
+            ("in_progress", State::InProgress),
+            ("ready2", State::Ready),
+        ] {
+            create(
+                &mut conn,
+                CreateTask {
+                    title,
+                    state: Some(state),
+                    description: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            titles(&mut conn, "").await,
+            ["in_progress", "ready1", "ready2", "icebox", "done"]
+        );
     }
 
     #[tokio::test]
